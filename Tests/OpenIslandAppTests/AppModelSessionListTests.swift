@@ -1332,7 +1332,7 @@ struct AppModelSessionListTests {
         model.islandSurface = surface
         model.measuredNotificationContentHeight = 360
 
-        model.overlay.presentNotificationSurface(surface)
+        model.overlay.presentNotificationSurface(surface, cue: nil)
 
         #expect(model.notchStatus == .opened)
         #expect(model.notchOpenReason == .notification)

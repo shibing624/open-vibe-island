@@ -949,7 +949,8 @@ public final class BridgeServer: @unchecked Sendable {
                         sessionID: payload.sessionID,
                         summary: payload.error ?? payload.lastAssistantMessage ?? payload.assistantMessagePreview ?? "\(payload.resolvedAgentTool.displayName) failed to finish the turn.",
                         timestamp: .now,
-                        isInterrupt: payload.isInterrupt
+                        isInterrupt: payload.isInterrupt,
+                        isFailure: true
                     )
                 )
             )

@@ -125,7 +125,25 @@
 /* Settings - Sound */
 "settings.sound.notifications" = "Notification Sounds";
 "settings.sound.mute" = "Mute";
+"settings.sound.volume" = "Volume";
 "settings.sound.selectSound" = "Select Sound";
+"settings.sound.theme" = "Event Sound Theme";
+"settings.sound.theme.system" = "System (one sound for all events)";
+"settings.sound.theme.rescan" = "Rescan Sound Packs";
+"settings.sound.theme.noPacks" = "No sound packs installed. Run ./scripts/fetch-sound-packs.sh from the repository, then rescan.";
+"settings.sound.theme.installHint" = "Sound packs are downloaded, not bundled. Add more with ./scripts/fetch-sound-packs.sh.";
+"settings.sound.theme.preview" = "Preview by Event";
+"settings.sound.theme.borrowed" = "This pack has no sound for this event — borrowed from its other sounds.";
+"settings.sound.theme.info" = "Pack Info";
+"settings.sound.theme.entries" = "Sounds";
+"settings.sound.theme.author" = "Author";
+"settings.sound.theme.license" = "License";
+"settings.sound.theme.source" = "Source";
+"settings.sound.cue.sessionStart" = "New session (no trigger — you are already at the terminal)";
+"settings.sound.cue.taskAcknowledge" = "First prompt of a session";
+"settings.sound.cue.taskComplete" = "Turn finished";
+"settings.sound.cue.taskError" = "Turn failed";
+"settings.sound.cue.inputRequired" = "Waiting for your approval or answer";
 
 /* Settings - Setup */
 "settings.tab.setup" = "Setup";

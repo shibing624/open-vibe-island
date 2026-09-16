@@ -125,7 +125,25 @@
 /* Settings - Sound */
 "settings.sound.notifications" = "通知音效";
 "settings.sound.mute" = "静音";
+"settings.sound.volume" = "音量";
 "settings.sound.selectSound" = "选择音效";
+"settings.sound.theme" = "事件音效主题";
+"settings.sound.theme.system" = "系统音（所有事件同一个音）";
+"settings.sound.theme.rescan" = "重新扫描音效包";
+"settings.sound.theme.noPacks" = "还没有安装音效包。在仓库里运行 ./scripts/fetch-sound-packs.sh，然后点重新扫描。";
+"settings.sound.theme.installHint" = "音效包是下载的，不随应用分发。用 ./scripts/fetch-sound-packs.sh 添加更多。";
+"settings.sound.theme.preview" = "按事件试听";
+"settings.sound.theme.borrowed" = "这个包没有这一类的音，借用了包内其他音。";
+"settings.sound.theme.info" = "音效包信息";
+"settings.sound.theme.entries" = "音数";
+"settings.sound.theme.author" = "作者";
+"settings.sound.theme.license" = "许可证";
+"settings.sound.theme.source" = "来源";
+"settings.sound.cue.sessionStart" = "新会话建立（不触发——你此刻就在终端前）";
+"settings.sound.cue.taskAcknowledge" = "会话的第一次提交";
+"settings.sound.cue.taskComplete" = "这一轮跑完";
+"settings.sound.cue.taskError" = "这一轮出错";
+"settings.sound.cue.inputRequired" = "等你批准或回答";
 
 /* Settings - Setup */
 "settings.tab.setup" = "安装引导";

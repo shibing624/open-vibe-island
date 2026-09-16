@@ -352,6 +352,40 @@ final class AppModel {
             NotificationSoundService.selectedSoundName = selectedSoundName
         }
     }
+
+    /// Selected event sound theme (`EventSoundService.systemThemeID` or an
+    /// installed pack id).
+    var soundThemeID: String = EventSoundService.systemThemeID {
+        didSet {
+            guard soundThemeID != oldValue else { return }
+            EventSoundService.shared.themeID = soundThemeID
+        }
+    }
+
+    var soundVolume: Double = 0.7 {
+        didSet {
+            guard soundVolume != oldValue else { return }
+            EventSoundService.shared.volume = Float(soundVolume)
+        }
+    }
+
+    var soundThemes: [SoundTheme] { EventSoundService.shared.themes }
+
+    var currentSoundTheme: SoundTheme? { EventSoundService.shared.currentTheme }
+
+    /// Rescans the packs directory, e.g. after the user ran the fetch script
+    /// while Open Island was open.
+    func reloadSoundThemes() {
+        EventSoundService.shared.reloadThemes()
+        soundThemeID = EventSoundService.shared.themeID
+    }
+
+    func previewSoundCue(_ cue: SoundCue) {
+        EventSoundService.shared.preview(cue)
+    }
+
+    @ObservationIgnored
+    private var soundCueRouter = SoundCueRouter()
     var overlayDisplaySelectionID: String {
         get { overlay.overlayDisplaySelectionID }
         set { overlay.overlayDisplaySelectionID = newValue }
@@ -646,6 +680,8 @@ final class AppModel {
         ])
         isSoundMuted = UserDefaults.standard.bool(forKey: Self.soundMutedDefaultsKey)
         selectedSoundName = NotificationSoundService.selectedSoundName
+        soundThemeID = EventSoundService.shared.themeID
+        soundVolume = Double(EventSoundService.shared.volume)
         showDockIcon = UserDefaults.standard.bool(forKey: Self.showDockIconDefaultsKey)
         hapticFeedbackEnabled = UserDefaults.standard.bool(forKey: Self.hapticFeedbackEnabledDefaultsKey)
         keepNotchOpenUntilDecision = UserDefaults.standard.bool(forKey: Self.keepNotchOpenUntilDecisionDefaultsKey)
@@ -1292,7 +1328,7 @@ final class AppModel {
     private func refreshOverlayPlacementIfVisible() { overlay.refreshOverlayPlacementIfVisible() }
     func notePointerInsideIslandSurface() { overlay.notePointerInsideIslandSurface() }
     func handlePointerExitedIslandSurface() { overlay.handlePointerExitedIslandSurface() }
-    private func presentNotificationSurface(_ surface: IslandSurface) { overlay.presentNotificationSurface(surface) }
+    private func presentNotificationSurface(_ surface: IslandSurface, cue: SoundCue?) { overlay.presentNotificationSurface(surface, cue: cue) }
     private func reconcileIslandSurfaceAfterStateChange() { overlay.reconcileIslandSurfaceAfterStateChange() }
     private func dismissNotificationSurfaceIfPresent(for sessionID: String) { overlay.dismissNotificationSurfaceIfPresent(for: sessionID) }
     private func dismissOverlayForJump() { overlay.dismissOverlayForJump() }
@@ -1567,6 +1603,11 @@ final class AppModel {
             return
         }
 
+        // Resolved before the state mutation so the decision depends on the
+        // event alone, and after the guards above so a discarded event does not
+        // consume the router's "first turn" bookkeeping.
+        let cue = soundCueRouter.cue(for: event)
+
         state.apply(event)
         reconcileIslandSurfaceAfterStateChange()
         if ingress == .bridge {
@@ -1613,14 +1654,27 @@ final class AppModel {
         if let surface = IslandSurface.notificationSurface(for: event) {
             scheduleNotificationSurfacePresentationIfNeeded(
                 surface,
+                cue: cue,
                 wasAlreadyCompleted: wasAlreadyCompleted,
                 ingress: ingress
             )
+        } else if let cue, isEventSoundEligible(ingress: ingress) {
+            // Cues without a notification card (today: the first prompt of a
+            // session) have nothing to ride along with, so they play here.
+            EventSoundService.shared.play(cue, isMuted: isSoundMuted)
         }
+    }
+
+    /// Stale events must not ring. During startup the rollout watcher replays
+    /// history, so the same rule the notification card uses applies to sound:
+    /// only live bridge events are trusted until initial resolution finishes.
+    private func isEventSoundEligible(ingress: TrackedEventIngress) -> Bool {
+        ingress == .bridge || !isResolvingInitialLiveSessions
     }
 
     private func scheduleNotificationSurfacePresentationIfNeeded(
         _ surface: IslandSurface,
+        cue: SoundCue?,
         wasAlreadyCompleted: Bool,
         ingress: TrackedEventIngress
     ) {
@@ -1632,7 +1686,7 @@ final class AppModel {
         }
 
         guard suppressFrontmostNotifications else {
-            presentNotificationSurface(surface)
+            presentNotificationSurface(surface, cue: cue)
             return
         }
 
@@ -1649,7 +1703,7 @@ final class AppModel {
                 return
             }
 
-            self.presentNotificationSurface(surface)
+            self.presentNotificationSurface(surface, cue: cue)
         }
     }
 
