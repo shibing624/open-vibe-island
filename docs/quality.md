@@ -11,6 +11,7 @@ The repository harness exists to make a round of work mechanically checkable. Th
 - `scripts/harness.sh smoke` launches the macOS app in harness mode, loads a deterministic debug scenario, captures local artifacts, and auto-exits after a short timeout.
 - `scripts/harness.sh smoke-all` runs the full debug-scenario suite and validates each artifact set.
 - `scripts/check-docs.sh` enforces the minimum doc map and required links.
+- `scripts/clean-and-run.sh` is the manual path: it cleans the user environment, rebuilds `~/Applications/Open Island Dev.app`, launches it, and then confirms the process is actually alive. It is not part of the automated harness because it mutates the local environment and leaves a GUI app running.
 
 ## Current Guarantees
 
@@ -26,6 +27,16 @@ The repository harness exists to make a round of work mechanically checkable. Th
 `scripts/smoke-dev-app.sh` sets harness environment variables before launching `OpenIslandApp`.
 
 The smoke path is intentionally aimed at the repository executable, not `~/Applications/Open Island Dev.app`. The dev bundle remains useful for manual end-to-end OSS verification, but harness automation should target the current branch's `OpenIslandApp` binary so the verification result matches the checked-out code exactly.
+
+## Manual Verification
+
+`scripts/clean-and-run.sh` composes `scripts/clean-user-env.sh` and `scripts/launch-dev-app.sh`, then adds the check neither of them makes: that the app survived launch. `open` returns success as soon as LaunchServices accepts the bundle, so a rejected signature, a missing `Info.plist` key, or a crash during startup are all indistinguishable from a healthy launch. When the process is not alive, the script prints the most recent crash report and re-runs the bundle binary in the foreground.
+
+It also reports installed sound packs, because cleaning removes `~/Library/Application Support/OpenIsland` — including `SoundPacks/`. A cleaned environment falls back to a single macOS system sound until `scripts/fetch-sound-packs.sh` runs again.
+
+- `--dry-run` shows what cleaning would remove and builds nothing
+- `--no-clean` rebuilds and launches without touching the environment
+- `--skip-setup` leaves the currently installed agent hooks alone
 
 - `OPEN_ISLAND_HARNESS_SCENARIO` selects a case from `IslandDebugScenario`
 - `OPEN_ISLAND_HARNESS_PRESENT_OVERLAY` mirrors the scenario onto the real island overlay
