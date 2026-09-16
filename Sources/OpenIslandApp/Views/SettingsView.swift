@@ -426,6 +426,7 @@ struct SetupSettingsPane: View {
     @State private var confirmingUninstallGemini = false
     @State private var confirmingUninstallKimi = false
     @State private var confirmingUninstallGrok = false
+    @State private var confirmingUninstallAgentica = false
     @State private var confirmingUninstallPi = false
     @State private var confirmingUninstallOhMyPi = false
     @State private var confirmingUninstallClaudeUsage = false
@@ -632,6 +633,44 @@ struct SetupSettingsPane: View {
                 }
 
                 hookRow(
+                    name: "Agentica CLI",
+                    installed: model.agenticaHooksInstalled,
+                    busy: model.isAgenticaHookSetupBusy,
+                    requiresBinary: true,
+                    configLocationURL: model.agenticaHookStatus?.configURL,
+                    installAction: { model.installAgenticaHooks() },
+                    uninstallAction: { confirmingUninstallAgentica = true }
+                )
+                .alert(lang.t("settings.general.uninstallConfirmTitle"), isPresented: $confirmingUninstallAgentica) {
+                    Button(lang.t("settings.general.uninstallConfirmAction"), role: .destructive) {
+                        model.uninstallAgenticaHooks()
+                    }
+                    Button(lang.t("settings.general.cancel"), role: .cancel) {}
+                } message: {
+                    Text("This will remove the settings.hooks block Open Island added to ~/.agentica/config.yaml.")
+                }
+                .alert(
+                    "agentica already has a hook",
+                    isPresented: Binding(
+                        get: { model.agenticaHookSlotConflict != nil },
+                        set: { if !$0 { model.agenticaHookSlotConflict = nil } }
+                    )
+                ) {
+                    Button("Take over", role: .destructive) {
+                        model.agenticaHookSlotConflict = nil
+                        model.takeOverAgenticaHookSlot()
+                    }
+                    Button(lang.t("settings.general.cancel"), role: .cancel) {
+                        model.agenticaHookSlotConflict = nil
+                    }
+                } message: {
+                    Text(
+                        "agentica runs exactly one hook command, and \(model.agenticaHookSlotConflict ?? "another program") "
+                        + "currently holds it. Taking over will stop that program from receiving agentica events."
+                    )
+                }
+
+                hookRow(
                     name: "Pi",
                     installed: model.piExtensionInstalled,
                     busy: model.isPiSetupBusy,
@@ -744,6 +783,7 @@ struct SetupSettingsPane: View {
                     if !model.geminiHooksInstalled { model.installGeminiHooks() }
                     if !model.kimiHooksInstalled { model.installKimiHooks() }
                     if !model.grokHooksInstalled { model.installGrokHooks() }
+                    if !model.agenticaHooksInstalled { model.installAgenticaHooks() }
                     if !model.piExtensionInstalled { model.installPiExtension() }
                     if !model.ohMyPiExtensionInstalled { model.installOhMyPiExtension() }
                     if !model.claudeUsageInstalled { model.installClaudeUsageBridge() }
@@ -808,7 +848,7 @@ struct SetupSettingsPane: View {
         model.claudeHooksInstalled && model.codexHooksInstalled && model.openCodePluginInstalled
             && model.qoderHooksInstalled && model.qwenCodeHooksInstalled && model.factoryHooksInstalled && model.codebuddyHooksInstalled
             && model.cursorHooksInstalled && model.geminiHooksInstalled && model.kimiHooksInstalled
-            && model.grokHooksInstalled
+            && model.grokHooksInstalled && model.agenticaHooksInstalled
             && model.piExtensionInstalled && model.ohMyPiExtensionInstalled && model.claudeUsageInstalled
     }
 

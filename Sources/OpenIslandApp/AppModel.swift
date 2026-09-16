@@ -144,6 +144,15 @@ final class AppModel {
     var grokHookStatus: GrokHookInstallationStatus? { hooks.grokHookStatus }
     var grokHookStatusTitle: String { hooks.grokHookStatusTitle }
     var grokHookStatusSummary: String { hooks.grokHookStatusSummary }
+    var agenticaHooksInstalled: Bool { hooks.agenticaHooksInstalled }
+    var isAgenticaHookSetupBusy: Bool { hooks.isAgenticaHookSetupBusy }
+    var agenticaHookStatus: AgenticaHookInstallationStatus? { hooks.agenticaHookStatus }
+    var agenticaHookStatusTitle: String { hooks.agenticaHookStatusTitle }
+    var agenticaHookStatusSummary: String { hooks.agenticaHookStatusSummary }
+    var agenticaHookSlotConflict: String? {
+        get { hooks.agenticaHookSlotConflict }
+        set { hooks.agenticaHookSlotConflict = newValue }
+    }
     var piExtensionInstalled: Bool { hooks.piExtensionInstalled }
     var ohMyPiExtensionInstalled: Bool { hooks.ohMyPiExtensionInstalled }
     var isPiSetupBusy: Bool { hooks.isPiSetupBusy }
@@ -206,6 +215,9 @@ final class AppModel {
     func refreshGeminiHookStatus() { hooks.refreshGeminiHookStatus() }
     func installGeminiHooks() { hooks.installGeminiHooks() }
     func uninstallGeminiHooks() { hooks.uninstallGeminiHooks() }
+    func installAgenticaHooks() { hooks.installAgenticaHooks() }
+    func takeOverAgenticaHookSlot() { hooks.installAgenticaHooks(replacingForeignCommand: true) }
+    func uninstallAgenticaHooks() { hooks.uninstallAgenticaHooks() }
     func refreshKimiHookStatus() { hooks.refreshKimiHookStatus() }
     func installKimiHooks() { hooks.installKimiHooks() }
     func uninstallKimiHooks() { hooks.uninstallKimiHooks() }
@@ -1720,6 +1732,7 @@ final class AppModel {
             if self.hooks.shouldAutoInstall(.gemini) { self.installGeminiHooks() }
             if self.hooks.shouldAutoInstall(.kimi) { self.installKimiHooks() }
             if self.hooks.shouldAutoInstall(.grok) { self.installGrokHooks() }
+            if self.hooks.shouldAutoInstall(.agentica) { self.installAgenticaHooks() }
             if self.hooks.shouldAutoInstall(.claudeUsageBridge) { self.installClaudeUsageBridge() }
 
             // Run health checks after install to detect stale paths, conflicts, etc.

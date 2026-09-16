@@ -19,12 +19,13 @@ struct OpenIslandHooksCLI {
         case gemini
         case kimi
         case grok
+        case agentica
 
         var isClaudeFormat: Bool {
             switch self {
             case .claude, .qoder, .qwen, .factory, .droid, .codebuddy, .kimi:
                 return true
-            case .codex, .cursor, .gemini, .grok:
+            case .codex, .cursor, .gemini, .grok, .agentica:
                 return false
             }
         }
@@ -117,6 +118,26 @@ struct OpenIslandHooksCLI {
                 // the hook can exit fail-open before Grok kills it.
                 if (try? client.send(.processGrokHook(payload), timeout: 40)) == nil {
                     logStderr("bridge unavailable for grok hook (\(payload.hookEventName.rawValue))")
+                }
+            case .agentica:
+                let payload = try decoder
+                    .decode(AgenticaHookPayload.self, from: input)
+                    .withRuntimeContext(environment: ProcessInfo.processInfo.environment)
+
+                // agentica caps neither `needs.*` request: a desktop answer must
+                // not get less time than a typed one, and it kills this process
+                // itself once the terminal answers.
+                let timeout = payload.hookEventName.expectsReply
+                    ? interactiveClaudeHookTimeout
+                    : 45
+
+                guard let response = try? client.send(.processAgenticaHook(payload), timeout: timeout) else {
+                    logStderr("bridge unavailable for agentica hook (\(payload.hookEventName.rawValue))")
+                    return
+                }
+
+                if let output = try AgenticaHookOutputEncoder.standardOutput(for: response) {
+                    FileHandle.standardOutput.write(output)
                 }
             }
         } catch {

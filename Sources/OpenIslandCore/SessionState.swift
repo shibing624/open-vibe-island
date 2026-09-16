@@ -437,6 +437,14 @@ public struct SessionState: Equatable, Sendable {
                     continue
                 }
 
+                // agentica's hook wire carries no session lifecycle at all — only
+                // per-run events — so there is no `SessionEnd` to wait for and no
+                // stable process id to poll. `expireIdleAgenticaSessions` ages
+                // these out by their last event instead.
+                if session.tool == .agenticaCLI {
+                    continue
+                }
+
                 // Codex.app sessions are handled by the app-level liveness branch
                 // above.  Other Codex hook sessions, such as VS Code / Claude
                 // plugin sessions, must still age out when their CLI process is
@@ -504,6 +512,36 @@ public struct SessionState: Equatable, Sendable {
             session.isProcessAlive = false
             session.phase = .completed
             session.heartbeatReconnectStartedAt = nil
+            upsert(session)
+            expired.insert(id)
+        }
+
+        return expired
+    }
+
+    /// Ends agentica sessions that stopped producing events.
+    ///
+    /// agentica emits `run.*` and `needs.*` but nothing for the session itself,
+    /// so quitting the CLI produces no signal at all. Without this an agentica row
+    /// would stay in the island until the app restarts, and every new `agentica`
+    /// launch would add another one. A session waiting on the user is never aged
+    /// out: an approval card the user has not answered yet is not idle.
+    @discardableResult
+    public mutating func expireIdleAgenticaSessions(before deadline: Date) -> Set<String> {
+        var expired: Set<String> = []
+
+        for (id, var session) in sessionsByID {
+            guard session.tool == .agenticaCLI,
+                  session.isHookManaged,
+                  !session.isSessionEnded,
+                  !session.phase.requiresAttention,
+                  session.updatedAt < deadline else {
+                continue
+            }
+
+            session.isSessionEnded = true
+            session.isProcessAlive = false
+            session.phase = .completed
             upsert(session)
             expired.insert(id)
         }

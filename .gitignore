@@ -18,6 +18,9 @@ Package.resolved
 
 # Local tooling artifacts
 .claude/
+
+# Scratch space for local smoke demos
+tmp/
 .playwright-mcp/
 output/
 

@@ -65,6 +65,16 @@ public final class BridgeServer: @unchecked Sendable {
         let payload: CursorHookPayload
     }
 
+    private struct PendingAgenticaInteraction {
+        enum Kind {
+            case approval(AgenticaHookPayload)
+            case question(AgenticaHookPayload)
+        }
+
+        let clientID: UUID
+        let kind: Kind
+    }
+
     private let socketURL: URL
     private let queue = DispatchQueue(label: "app.openisland.bridge.server")
     private let queueKey = DispatchSpecificKey<Void>()
@@ -76,6 +86,7 @@ public final class BridgeServer: @unchecked Sendable {
     private var pendingClaudeInteractions: [String: PendingClaudeInteraction] = [:]
     private var pendingOpenCodeInteractions: [String: PendingOpenCodeInteraction] = [:]
     private var pendingCursorInteractions: [String: PendingCursorInteraction] = [:]
+    private var pendingAgenticaInteractions: [String: PendingAgenticaInteraction] = [:]
     /// Caches Agent tool description from preToolUse for use by the next subagentStart.
     private var pendingAgentDescriptions: [String: String] = [:]
     /// Maps toolUseID → temporary task ID for TaskCreate, so postToolUse can update with real ID.
@@ -195,6 +206,7 @@ public final class BridgeServer: @unchecked Sendable {
         pendingTaskCreations.removeAll()
         pendingOpenCodeInteractions.removeAll()
         pendingCursorInteractions.removeAll()
+        pendingAgenticaInteractions.removeAll()
 
         let activeConnections = Array(clients.values)
         activeConnections.forEach { $0.readSource.cancel() }
@@ -349,6 +361,12 @@ public final class BridgeServer: @unchecked Sendable {
                 return
             }
 
+            if pendingAgenticaInteractions[sessionID] != nil {
+                resolvePendingAgenticaApproval(sessionID: sessionID, resolution: resolution)
+                send(.response(.acknowledged), to: clientID)
+                return
+            }
+
             if let interaction = pendingCursorInteractions.removeValue(forKey: sessionID) {
                 let directive: CursorHookDirective
                 let summary: String
@@ -448,6 +466,12 @@ public final class BridgeServer: @unchecked Sendable {
                 return
             }
 
+            if pendingAgenticaInteractions[sessionID] != nil {
+                resolvePendingAgenticaQuestion(sessionID: sessionID, response: response)
+                send(.response(.acknowledged), to: clientID)
+                return
+            }
+
             let summary = response.displaySummary.isEmpty
                 ? "Answered the question."
                 : "Answered: \(response.displaySummary)"
@@ -482,6 +506,8 @@ public final class BridgeServer: @unchecked Sendable {
             handleGrokHook(payload, from: clientID)
         case let .processPiHook(payload):
             handlePiHook(payload, from: clientID)
+        case let .processAgenticaHook(payload):
+            handleAgenticaHook(payload, from: clientID)
         }
     }
 
@@ -1831,6 +1857,256 @@ public final class BridgeServer: @unchecked Sendable {
                 )
             )
         )
+    }
+
+    private func handleAgenticaHook(_ payload: AgenticaHookPayload, from clientID: UUID) {
+        let sessionID = payload.resolvedSessionID
+
+        switch payload.hookEventName {
+        case .runStarted:
+            clearStaleAgenticaInteractionIfNeeded(for: sessionID)
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .activityUpdated(
+                    SessionActivityUpdated(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        phase: .running,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .runCompleted, .runFailed:
+            clearStaleAgenticaInteractionIfNeeded(for: sessionID)
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .sessionCompleted(
+                    SessionCompleted(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .runCancelled:
+            clearStaleAgenticaInteractionIfNeeded(for: sessionID)
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .sessionCompleted(
+                    SessionCompleted(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        timestamp: .now,
+                        isInterrupt: true
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .needsApproval:
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .permissionRequested(
+                    PermissionRequested(
+                        sessionID: sessionID,
+                        request: PermissionRequest(
+                            title: payload.approvalTitle,
+                            summary: payload.approvalSummary,
+                            affectedPath: payload.workingDirectory,
+                            primaryActionTitle: "Allow",
+                            secondaryActionTitle: "Deny",
+                            toolName: payload.toolName,
+                            toolUseID: payload.toolCallID
+                        ),
+                        timestamp: .now
+                    )
+                )
+            )
+
+            // No response yet: agentica reads the reply from this hook's stdout,
+            // so the connection has to stay open until the user decides here or
+            // answers in the terminal (agentica kills the hook in that case).
+            pendingAgenticaInteractions[sessionID] = PendingAgenticaInteraction(
+                clientID: clientID,
+                kind: .approval(payload)
+            )
+
+        case .needsInput:
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .questionAsked(
+                    QuestionAsked(
+                        sessionID: sessionID,
+                        prompt: payload.questionPrompt,
+                        timestamp: .now
+                    )
+                )
+            )
+
+            pendingAgenticaInteractions[sessionID] = PendingAgenticaInteraction(
+                clientID: clientID,
+                kind: .question(payload)
+            )
+        }
+    }
+
+    private func ensureAgenticaSessionExists(for payload: AgenticaHookPayload) {
+        let sessionID = payload.resolvedSessionID
+        guard !hasSession(id: sessionID) else {
+            return
+        }
+
+        emit(
+            .sessionStarted(
+                SessionStarted(
+                    sessionID: sessionID,
+                    title: payload.sessionTitle,
+                    tool: .agenticaCLI,
+                    origin: .live,
+                    initialPhase: payload.hookEventName == .runStarted ? .running : .completed,
+                    summary: payload.implicitSummary,
+                    timestamp: .now,
+                    jumpTarget: payload.defaultJumpTarget
+                )
+            )
+        )
+    }
+
+    private func synchronizeAgenticaJumpTarget(for payload: AgenticaHookPayload) {
+        let sessionID = payload.resolvedSessionID
+        guard let existingSession = localState.session(id: sessionID) else {
+            return
+        }
+
+        let jumpTarget = Self.mergeJumpTargetPreservingExistingResolvedFields(
+            incoming: payload.defaultJumpTarget,
+            existing: existingSession.jumpTarget
+        )
+
+        guard existingSession.jumpTarget != jumpTarget else {
+            return
+        }
+
+        emit(
+            .jumpTargetUpdated(
+                JumpTargetUpdated(
+                    sessionID: sessionID,
+                    jumpTarget: jumpTarget,
+                    timestamp: .now
+                )
+            )
+        )
+    }
+
+    /// Releases a parked `needs.*` request that a later lifecycle event proved
+    /// obsolete — the user answered in the terminal, so agentica has moved on.
+    private func clearStaleAgenticaInteractionIfNeeded(for sessionID: String) {
+        guard let interaction = pendingAgenticaInteractions.removeValue(forKey: sessionID) else {
+            return
+        }
+
+        // An empty directive prints nothing, which agentica reads as "no
+        // decision". Replying at all is what lets the hook process exit instead
+        // of waiting to be killed.
+        send(.response(.agenticaHookDirective(AgenticaHookDirective())), to: interaction.clientID)
+        emit(
+            .actionableStateResolved(
+                ActionableStateResolved(
+                    sessionID: sessionID,
+                    summary: "Answered in the terminal.",
+                    timestamp: .now
+                )
+            )
+        )
+    }
+
+    private func resolvePendingAgenticaApproval(
+        sessionID: String,
+        resolution: PermissionResolution
+    ) {
+        guard let interaction = pendingAgenticaInteractions.removeValue(forKey: sessionID) else {
+            return
+        }
+
+        let directive: AgenticaHookDirective
+        let summary: String
+        let phase: SessionPhase
+
+        switch (interaction.kind, resolution) {
+        case let (.approval(payload), .allowOnce):
+            directive = AgenticaHookDirective(decision: .allow)
+            summary = payload.toolName.map { "Approved \($0)." } ?? "Approved in Open Island."
+            phase = .running
+
+        case (.approval, .deny):
+            directive = AgenticaHookDirective(decision: .deny)
+            if case let .deny(message, _) = resolution {
+                summary = message ?? "Denied in Open Island."
+            } else {
+                summary = "Denied in Open Island."
+            }
+            phase = .running
+
+        case (.question, _):
+            // A question has no decision vocabulary on this wire. Sending nothing
+            // leaves the terminal prompt as the answer path, which is the correct
+            // fail-open behaviour.
+            directive = AgenticaHookDirective()
+            summary = "Left the question for the terminal."
+            phase = .running
+        }
+
+        emit(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: sessionID,
+                    summary: summary,
+                    phase: phase,
+                    timestamp: .now
+                )
+            )
+        )
+
+        send(.response(.agenticaHookDirective(directive)), to: interaction.clientID)
+    }
+
+    private func resolvePendingAgenticaQuestion(
+        sessionID: String,
+        response: QuestionPromptResponse
+    ) {
+        guard let interaction = pendingAgenticaInteractions.removeValue(forKey: sessionID) else {
+            return
+        }
+
+        let answerText = response.rawAnswer ?? response.displaySummary
+
+        // agentica ignores an empty answer, so an empty reply would silently
+        // strand the run. Say nothing instead and let the terminal answer.
+        let directive = answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? AgenticaHookDirective()
+            : AgenticaHookDirective(answer: answerText)
+
+        emit(
+            .activityUpdated(
+                SessionActivityUpdated(
+                    sessionID: sessionID,
+                    summary: directive.answer.map { "Answered: \($0)" } ?? "Left the question for the terminal.",
+                    phase: .running,
+                    timestamp: .now
+                )
+            )
+        )
+
+        send(.response(.agenticaHookDirective(directive)), to: interaction.clientID)
     }
 
     private func clearStaleCursorInteractionIfNeeded(for sessionID: String) {
@@ -3204,6 +3480,24 @@ public final class BridgeServer: @unchecked Sendable {
 
         for sessionID in pendingCursorSessionIDs {
             pendingCursorInteractions.removeValue(forKey: sessionID)
+            emit(
+                .actionableStateResolved(
+                    ActionableStateResolved(
+                        sessionID: sessionID,
+                        summary: "Hook process disconnected.",
+                        timestamp: .now
+                    )
+                )
+            )
+        }
+
+        let pendingAgenticaSessionIDs = pendingAgenticaInteractions.compactMap { entry -> String? in
+            let (sessionID, pendingInteraction) = entry
+            return pendingInteraction.clientID == clientID ? sessionID : nil
+        }
+
+        for sessionID in pendingAgenticaSessionIDs {
+            pendingAgenticaInteractions.removeValue(forKey: sessionID)
             emit(
                 .actionableStateResolved(
                     ActionableStateResolved(

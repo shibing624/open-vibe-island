@@ -57,6 +57,10 @@ final class ProcessMonitoringCoordinator {
     private static let claudeDesktopStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let conductorStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let piHeartbeatTimeout: TimeInterval = 45
+    /// agentica reports runs, not sessions, so an idle row is the only evidence
+    /// the CLI is gone. Matches the staleness window used for the other sources
+    /// that lack a session-end signal (Cursor / Claude Desktop / Conductor).
+    private static let agenticaIdleTimeout: TimeInterval = 600
 
     static func monitoringPollInterval(
         isResolvingInitialLiveSessions: Bool,
@@ -179,6 +183,7 @@ final class ProcessMonitoringCoordinator {
                 }
 
                 self.expireStalePiHeartbeatSessions()
+                self.expireIdleAgenticaSessions()
 
                 let wakeInterval = Self.monitoringWakeInterval(
                     isResolvingInitialLiveSessions: self.isResolvingInitialLiveSessions,
@@ -323,6 +328,19 @@ final class ProcessMonitoringCoordinator {
         if resolutionReport.isAuthoritative {
             isResolvingInitialLiveSessions = false
         }
+        onSessionsReconciled?()
+        onPersistenceNeeded?()
+    }
+
+    private func expireIdleAgenticaSessions(now: Date = .now) {
+        var local = state
+        let expired = local.expireIdleAgenticaSessions(
+            before: now.addingTimeInterval(-Self.agenticaIdleTimeout)
+        )
+        guard !expired.isEmpty else { return }
+
+        _ = local.removeInvisibleSessions()
+        state = local
         onSessionsReconciled?()
         onPersistenceNeeded?()
     }
@@ -1595,6 +1613,8 @@ final class ProcessMonitoringCoordinator {
             return "Pi \(session.id.prefix(8))"
         case .ohMyPi:
             return "Oh My Pi \(session.id.prefix(8))"
+        case .agenticaCLI:
+            return "Agentica \(session.id.prefix(8))"
         }
     }
 }

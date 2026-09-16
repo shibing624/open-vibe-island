@@ -91,6 +91,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
     case processGeminiHook(GeminiHookPayload)
     case processGrokHook(GrokHookPayload)
     case processPiHook(PiHookPayload)
+    case processAgenticaHook(AgenticaHookPayload)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -106,6 +107,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case geminiHook
         case grokHook
         case piHook
+        case agenticaHook
     }
 
     private enum CommandType: String, Codable {
@@ -120,6 +122,7 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case processGeminiHook
         case processGrokHook
         case processPiHook
+        case processAgenticaHook
     }
 
     public init(from decoder: any Decoder) throws {
@@ -158,6 +161,8 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
             self = .processGrokHook(try container.decode(GrokHookPayload.self, forKey: .grokHook))
         case .processPiHook:
             self = .processPiHook(try container.decode(PiHookPayload.self, forKey: .piHook))
+        case .processAgenticaHook:
+            self = .processAgenticaHook(try container.decode(AgenticaHookPayload.self, forKey: .agenticaHook))
         }
     }
 
@@ -201,6 +206,9 @@ public enum BridgeCommand: Equatable, Codable, Sendable {
         case let .processPiHook(payload):
             try container.encode(CommandType.processPiHook, forKey: .type)
             try container.encode(payload, forKey: .piHook)
+        case let .processAgenticaHook(payload):
+            try container.encode(CommandType.processAgenticaHook, forKey: .type)
+            try container.encode(payload, forKey: .agenticaHook)
         }
     }
 }
@@ -211,6 +219,7 @@ public enum BridgeResponse: Equatable, Codable, Sendable {
     case claudeHookDirective(ClaudeHookDirective)
     case openCodeHookDirective(OpenCodeHookDirective)
     case cursorHookDirective(CursorHookDirective)
+    case agenticaHookDirective(AgenticaHookDirective)
 
     private enum CodingKeys: String, CodingKey {
         case type
@@ -223,6 +232,7 @@ public enum BridgeResponse: Equatable, Codable, Sendable {
         case claudeHookDirective
         case openCodeHookDirective
         case cursorHookDirective
+        case agenticaHookDirective
     }
 
     public init(from decoder: any Decoder) throws {
@@ -240,6 +250,8 @@ public enum BridgeResponse: Equatable, Codable, Sendable {
             self = .openCodeHookDirective(try container.decode(OpenCodeHookDirective.self, forKey: .directive))
         case .cursorHookDirective:
             self = .cursorHookDirective(try container.decode(CursorHookDirective.self, forKey: .directive))
+        case .agenticaHookDirective:
+            self = .agenticaHookDirective(try container.decode(AgenticaHookDirective.self, forKey: .directive))
         }
     }
 
@@ -260,6 +272,9 @@ public enum BridgeResponse: Equatable, Codable, Sendable {
             try container.encode(directive, forKey: .directive)
         case let .cursorHookDirective(directive):
             try container.encode(ResponseType.cursorHookDirective, forKey: .type)
+            try container.encode(directive, forKey: .directive)
+        case let .agenticaHookDirective(directive):
+            try container.encode(ResponseType.agenticaHookDirective, forKey: .type)
             try container.encode(directive, forKey: .directive)
         }
     }

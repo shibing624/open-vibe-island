@@ -370,7 +370,12 @@ struct TerminalJumpServiceTests {
             openAction: { arguments in
                 openedArguments.values.append(arguments)
             },
-            appleScriptRunner: { _ in "" }
+            appleScriptRunner: { _ in "" },
+            // Must be injected: the default runner shells out to the real `trae`
+            // CLI, so an uninjected test launches the IDE on any machine that
+            // has it installed — and then never reaches the activation branch
+            // this test is about.
+            processRunner: { _, _ in false }
         )
 
         let result = try service.jump(

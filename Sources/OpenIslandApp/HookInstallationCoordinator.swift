@@ -29,6 +29,10 @@ final class HookInstallationCoordinator {
     var geminiHookStatus: GeminiHookInstallationStatus?
     var kimiHookStatus: KimiHookInstallationStatus?
     var grokHookStatus: GrokHookInstallationStatus?
+    var agenticaHookStatus: AgenticaHookInstallationStatus?
+    /// Set when an install was refused because another program's command holds
+    /// agentica's single hook slot. Cleared once the user answers.
+    var agenticaHookSlotConflict: String?
     var piExtensionStatus: PiExtensionInstallationStatus?
     var ohMyPiExtensionStatus: PiExtensionInstallationStatus?
     var claudeStatusLineStatus: ClaudeStatusLineInstallationStatus?
@@ -46,6 +50,7 @@ final class HookInstallationCoordinator {
     var isGeminiHookSetupBusy = false
     var isKimiHookSetupBusy = false
     var isGrokHookSetupBusy = false
+    var isAgenticaHookSetupBusy = false
     var isPiSetupBusy = false
     var isOhMyPiSetupBusy = false
     var isClaudeUsageSetupBusy = false
@@ -93,6 +98,9 @@ final class HookInstallationCoordinator {
 
     @ObservationIgnored
     private let geminiHookInstallationManager = GeminiHookInstallationManager()
+
+    @ObservationIgnored
+    private let agenticaHookInstallationManager = AgenticaHookInstallationManager()
 
     @ObservationIgnored
     private let kimiHookInstallationManager = KimiHookInstallationManager()
@@ -158,6 +166,10 @@ final class HookInstallationCoordinator {
 
     var geminiHooksInstalled: Bool {
         geminiHookStatus?.managedHooksPresent == true
+    }
+
+    var agenticaHooksInstalled: Bool {
+        agenticaHookStatus?.managedHooksPresent == true
     }
 
     var kimiHooksInstalled: Bool {
@@ -379,6 +391,40 @@ final class HookInstallationCoordinator {
         }
 
         return status.managedHooksPresent ? "managed hooks present" : "no managed Gemini hooks"
+    }
+
+    var agenticaHookStatusTitle: String {
+        guard agenticaHookStatus != nil else { return "Agentica hooks loading" }
+
+        if agenticaHooksInstalled {
+            return "Agentica hooks installed"
+        }
+
+        if hooksBinaryURL == nil {
+            return "Hook binary not found"
+        }
+
+        return "Agentica hooks not installed"
+    }
+
+    var agenticaHookStatusSummary: String {
+        guard let status = agenticaHookStatus else {
+            return "Reading ~/.agentica/config.yaml."
+        }
+
+        if hooksBinaryURL == nil {
+            return "Build OpenIslandHooks before installing."
+        }
+
+        if status.managedHooksPresent {
+            return "managed hooks present · restart the agentica CLI to pick them up"
+        }
+
+        if let foreign = status.foreignHookCommand {
+            return "hook slot held by \(URL(fileURLWithPath: foreign).lastPathComponent)"
+        }
+
+        return "no managed Agentica hooks"
     }
 
     var kimiHookStatusTitle: String {
@@ -764,6 +810,16 @@ final class HookInstallationCoordinator {
 
             group.addTask { @MainActor [weak self] in
                 guard let self else { return }
+                do {
+                    let status = try self.agenticaHookInstallationManager.status(hooksBinaryURL: self.hooksBinaryURL)
+                    self.agenticaHookStatus = status
+                } catch {
+                    self.onStatusMessage?("Failed to read Agentica hook status: \(error.localizedDescription)")
+                }
+            }
+
+            group.addTask { @MainActor [weak self] in
+                guard let self else { return }
                 self.loadPiExtensionStatuses()
             }
         }
@@ -934,6 +990,7 @@ final class HookInstallationCoordinator {
         case .grok: return !grokHooksInstalled
         case .pi: return !(piExtensionStatus?.isCurrent ?? false)
         case .ohMyPi: return !(ohMyPiExtensionStatus?.isCurrent ?? false)
+        case .agentica: return !agenticaHooksInstalled
         case .claudeUsageBridge: return !claudeUsageInstalled
         }
     }
@@ -961,6 +1018,7 @@ final class HookInstallationCoordinator {
             case .grok: return grokHooksInstalled
             case .pi: return piExtensionInstalled
             case .ohMyPi: return ohMyPiExtensionInstalled
+            case .agentica: return agenticaHooksInstalled
             case .claudeUsageBridge: return claudeUsageInstalled
             }
         }
@@ -1163,6 +1221,26 @@ final class HookInstallationCoordinator {
 
         updateKimiHooks(userMessage: "Installing Kimi hooks.", intent: .installed) { manager in
             try manager.install(hooksBinaryURL: hooksBinaryURL)
+        }
+    }
+
+    func installAgenticaHooks(replacingForeignCommand: Bool = false) {
+        guard let hooksBinaryURL else {
+            onStatusMessage?("Could not find a local OpenIslandHooks binary. Build the package first.")
+            return
+        }
+
+        updateAgenticaHooks(userMessage: "Installing Agentica hooks.", intent: .installed) { manager in
+            try manager.install(
+                hooksBinaryURL: hooksBinaryURL,
+                replacingForeignCommand: replacingForeignCommand
+            )
+        }
+    }
+
+    func uninstallAgenticaHooks() {
+        updateAgenticaHooks(userMessage: "Removing Agentica hooks.", intent: .uninstalled) { manager in
+            try manager.uninstall()
         }
     }
 
@@ -1456,6 +1534,41 @@ final class HookInstallationCoordinator {
                 }
             } catch {
                 self.onStatusMessage?("Gemini hook update failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func updateAgenticaHooks(
+        userMessage: String,
+        intent: AgentHookIntent,
+        operation: @escaping (AgenticaHookInstallationManager) throws -> AgenticaHookInstallationStatus
+    ) {
+        isAgenticaHookSetupBusy = true
+        onStatusMessage?(userMessage)
+
+        Task { [weak self] in
+            guard let self else { return }
+
+            defer { self.isAgenticaHookSetupBusy = false }
+
+            do {
+                let status = try operation(self.agenticaHookInstallationManager)
+                self.agenticaHookStatus = status
+                self.intentStore.setIntent(intent, for: .agentica)
+                if status.managedHooksPresent {
+                    self.onStatusMessage?("Agentica hooks installed. Restart the agentica CLI to pick them up.")
+                } else {
+                    self.onStatusMessage?("Agentica hooks are not installed.")
+                }
+            } catch let AgenticaHookInstallerError.foreignHookCommand(command) {
+                // Not a failure to report and forget: agentica runs one hook
+                // command, so the user has to decide whether Open Island may
+                // take the wire from whatever holds it. The intent is left
+                // untouched so startup does not keep retrying this.
+                self.agenticaHookSlotConflict = command
+                self.onStatusMessage?("agentica's hook slot is held by \(command).")
+            } catch {
+                self.onStatusMessage?("Agentica hook update failed: \(error.localizedDescription)")
             }
         }
     }

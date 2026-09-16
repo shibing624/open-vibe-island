@@ -1,6 +1,6 @@
 # Hook System
 
-OpenIsland receives lifecycle events from managed hook CLIs and runtime extensions. Codex, Claude-family agents, Gemini CLI, Grok Build, and Kimi CLI invoke `OpenIslandHooks`; Pi and Oh My Pi load a TypeScript extension. Both paths forward typed payloads to the app over its Unix socket. Hook sources that support blocking can receive directives on stdout; Pi-family extensions are fire-and-forget.
+OpenIsland receives lifecycle events from managed hook CLIs and runtime extensions. Codex, Claude-family agents, Gemini CLI, Grok Build, Kimi CLI, and Agentica CLI invoke `OpenIslandHooks`; Pi and Oh My Pi load a TypeScript extension. Both paths forward typed payloads to the app over its Unix socket. Hook sources that support blocking can receive directives on stdout; Pi-family extensions are fire-and-forget.
 
 ## Architecture
 
@@ -349,6 +349,8 @@ Jump-back metadata (terminal app, terminal session ID, TTY) is read from the age
 | Claude Code | All other events | **45 seconds** |
 | Gemini CLI | All events | Bridge default |
 | Grok Build | All managed events | **45 seconds** |
+| Agentica | `needs.approval` / `needs.input` | **24 hours** (agentica sets no cap of its own) |
+| Agentica | `run.*` notices | **45 seconds** |
 | Pi / Oh My Pi | Heartbeat liveness | **45 seconds** |
 
 ---
@@ -407,6 +409,142 @@ swift run OpenIslandSetup uninstallGrok
 Or use **Settings → Setup → Grok Build** in the app.
 
 > If commercial Vibe Island is also installed, both may write under `~/.grok/hooks/`. Prefer one controller at a time.
+
+---
+
+## Agentica CLI Hooks (`--source agentica`)
+
+**Payload type**: `AgenticaHookPayload`
+**Source**: [`Sources/OpenIslandCore/AgenticaHooks.swift`](../Sources/OpenIslandCore/AgenticaHooks.swift)
+
+Agentica's wire is not a Claude-family wire. Event names are dotted rather than
+PascalCase, there are only six of them, and the two blocking ones are *requests*
+that race the terminal instead of gates that own the decision.
+
+### Events
+
+| `hook_event_name` | When it fires | Current Open Island behavior |
+|---|---|---|
+| `run.started` | A run begins | Creates / re-opens the session, marks it running, shows the run's anchor prompt |
+| `run.completed` | A run finishes with a response | Turn completion card, summary from `answer` |
+| `run.failed` | A run raised | Turn completion card, summary from `error` / `reason` |
+| `run.cancelled` | A run was cancelled | Turn completion flagged `isInterrupt` |
+| `needs.approval` | A tool call is waiting for approval | Permission card; **replies** `{"decision":"allow"\|"deny"}` |
+| `needs.input` | The agent is asking the user a question | Question card; **replies** `{"answer":"…"}` |
+
+### Reply contract
+
+Agentica reads **one JSON document** from the hook's stdout and races it against
+the answer typed in the terminal — whoever answers first wins, and the loser is
+not an error. Two consequences shape the implementation:
+
+- **Printing nothing means "no decision."** Open Island stays silent whenever it
+  has nothing usable to say (a notice event, a question the user dismissed, an
+  empty answer). Agentica then falls back to the terminal prompt. This is the
+  fail-open path and it is the default, not an error branch.
+- **The decision vocabulary is agentica's**: `allow`, `deny`, `allow_prefix`,
+  `deny_prefix`. Anything else is read as "no decision" rather than coerced, so
+  Open Island never invents a value. Only `allow` and `deny` are sent: the
+  permission card has two actions, and a decision that silently covers every
+  similar future call is not something to infer from a two-button tap.
+
+Agentica imposes **no wait cap** on a request, so a desktop answer must not get
+less time than a typed one: `needs.*` uses the same 24-hour client timeout as
+Claude `PermissionRequest`. Agentica kills the hook process itself once the
+terminal answers, so there is nothing to time out against.
+
+### Wire format notes
+
+- Stdin JSON uses **snake_case** (`hook_event_name`, `session_id`, `tool_call_id`).
+- Optional fields are **omitted, never null**.
+- `prompt` is the run's *anchor text* — the user's message on an ordinary turn,
+  the goal objective in a goal-driven session. It is not "what the user just typed".
+- `session_id` is absent when a run is dispatched without a live `Agent`. Open
+  Island falls back to keying the session by `cwd`, which merges concurrent runs
+  in one directory rather than dropping the event.
+- Island session ids are prefixed `agentica-` so they cannot collide with ids
+  minted by another CLI.
+
+### Lifecycle / liveness notes
+
+Agentica reports **runs, not sessions**: there is no session-start or session-end
+event, and quitting the CLI produces no signal at all. Open Island therefore ages
+an agentica row out 10 minutes after its last event (`SessionState.expireIdleAgenticaSessions`),
+the same staleness window used for the other sources that lack a session-end
+signal. A session that is still waiting on the user is never aged out. Generic
+process polling does not keep agentica sessions alive.
+
+### Install / uninstall
+
+Agentica reads `settings.hooks` from `~/.agentica/config.yaml` (or
+`$AGENTICA_HOME/config.yaml`) **once at startup**, so an install only takes
+effect on the next `agentica` launch.
+
+```bash
+swift run OpenIslandSetup installAgentica
+swift run OpenIslandSetup statusAgentica
+swift run OpenIslandSetup uninstallAgentica
+
+# When another program already holds agentica's single hook slot:
+swift run OpenIslandSetup installAgentica --take-over-hook-slot
+```
+
+Or use **Settings → Setup → Agentica CLI** in the app.
+
+The installed block looks like this — `command` is an argv list, which is why a
+binary path containing spaces needs no quoting rules:
+
+```yaml
+settings:
+  hooks:
+    enabled: true
+    command:
+      - "/Users/you/Library/Application Support/OpenIsland/bin/OpenIslandHooks"
+      - "--source"
+      - "agentica"
+```
+
+That file also holds every model profile and plaintext API key, and agentica
+documents it as comment-preserving. So the installer edits **text**, scoped to the
+`settings.hooks` sub-block, instead of round-tripping a YAML parser that would
+delete the user's comments. The safety property that makes this acceptable is that
+an unrecognized shape (an inline `settings: {...}`, tab indentation) is **refused
+with an error, never guessed** — a wrong guess could write a duplicate key and make
+agentica fall back to an empty config.
+
+Two ownership rules follow from `settings.hooks.command` being a **single** argv
+list, so that agentica runs exactly one hook command:
+
+- **Reinstalling over our own block rewrites only `enabled` and `command`.** A
+  hand-tuned `events:` gate, and the comments around it, stay exactly as found.
+- **Installing over somebody else's command is refused.** Taking the wire is
+  disabling their hook, so it needs the user's consent: the app asks, and the CLI
+  takes `--take-over-hook-slot`. A takeover is a full replacement, because the
+  previous owner's `events:` gating described what *they* wanted to hear about and
+  inheriting it would mute Open Island's own events. Uninstall never touches a
+  block that is not ours.
+
+### Current limitations
+
+These are limits of agentica's current hook surface, not of the integration.
+See [agentica-hooks-upgrade-plan.md](agentica-hooks-upgrade-plan.md) for the
+proposed fixes on the agentica side.
+
+- **No tool-level events.** There is no `PreToolUse` / `PostToolUse`, so the island
+  cannot show which tool is running — only that a run is in progress. agentica does
+  compute this (`RunEvent.ToolCallStarted` in `runner/loop.py`) but only exposes it
+  in-process; the external buses carry the four `run.*` events only.
+- **Only one consumer at a time.** `settings.hooks.command` is a single argv list,
+  so Open Island and any other desktop app that wants agentica events have to take
+  turns.
+- **No session lifecycle.** Sessions are aged out on idle rather than ended, as
+  described above.
+- **Hooks only fire in the interactive CLI.** `install_hook_egress()` is called
+  from agentica's interactive app only, so one-shot and SDK runs emit nothing.
+- **No jump-back identity in the payload.** Terminal app / TTY are resolved by the
+  hook binary from its parent process, because agentica spawns hooks with
+  `setsid` and sends neither the agent's pid nor its TTY.
+
 
 ---
 
