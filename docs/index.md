@@ -18,6 +18,7 @@ This index is the repository map for humans and coding agents. Read these files 
 ## Hooks
 
 - [docs/hooks.md](./hooks.md) for the supported hook events, payload fields, and directive response protocol
+- [docs/agentica-hooks-upgrade-plan.md](./agentica-hooks-upgrade-plan.md) for the agentica CLI hook integration plan
 
 ## Harness And Planning
 
