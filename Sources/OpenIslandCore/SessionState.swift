@@ -521,11 +521,12 @@ public struct SessionState: Equatable, Sendable {
 
     /// Ends agentica sessions that stopped producing events.
     ///
-    /// agentica emits `run.*` and `needs.*` but nothing for the session itself,
-    /// so quitting the CLI produces no signal at all. Without this an agentica row
-    /// would stay in the island until the app restarts, and every new `agentica`
-    /// launch would add another one. A session waiting on the user is never aged
-    /// out: an approval card the user has not answered yet is not idle.
+    /// `session.ended` marks a cleanly exited CLI as completed, but it cannot
+    /// cover a hard kill, and agentica rows are not process-tracked the way Codex
+    /// and Claude rows are — so this is what actually removes the row. Without it
+    /// an agentica session would stay in the island until the app restarts, and
+    /// every new `agentica` launch would add another one. A session waiting on the
+    /// user is never aged out: an approval card nobody answered yet is not idle.
     @discardableResult
     public mutating func expireIdleAgenticaSessions(before deadline: Date) -> Set<String> {
         var expired: Set<String> = []

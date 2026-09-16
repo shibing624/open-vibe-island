@@ -733,27 +733,7 @@ struct SetupSettingsPane: View {
                     }
                     Button(lang.t("settings.general.cancel"), role: .cancel) {}
                 } message: {
-                    Text("This will remove the settings.hooks block Open Island added to ~/.agentica/config.yaml.")
-                }
-                .alert(
-                    "agentica already has a hook",
-                    isPresented: Binding(
-                        get: { model.agenticaHookSlotConflict != nil },
-                        set: { if !$0 { model.agenticaHookSlotConflict = nil } }
-                    )
-                ) {
-                    Button("Take over", role: .destructive) {
-                        model.agenticaHookSlotConflict = nil
-                        model.takeOverAgenticaHookSlot()
-                    }
-                    Button(lang.t("settings.general.cancel"), role: .cancel) {
-                        model.agenticaHookSlotConflict = nil
-                    }
-                } message: {
-                    Text(
-                        "agentica runs exactly one hook command, and \(model.agenticaHookSlotConflict ?? "another program") "
-                        + "currently holds it. Taking over will stop that program from receiving agentica events."
-                    )
+                    Text("This will remove the open-island consumer Open Island added to ~/.agentica/config.yaml. Other consumers on that wire are left alone.")
                 }
 
                 hookRow(

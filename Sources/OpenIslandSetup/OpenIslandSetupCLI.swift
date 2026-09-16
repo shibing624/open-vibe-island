@@ -43,8 +43,6 @@ private struct SetupCommand {
     let grokDirectory: URL
     let agenticaDirectory: URL
     let hooksBinary: URL?
-    /// Take over agentica's single hook slot from another program's command.
-    let replacingForeignCommand: Bool
 
     init(arguments: [String]) throws {
         guard let rawAction = arguments.first,
@@ -60,14 +58,10 @@ private struct SetupCommand {
         var kimiDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kimi", isDirectory: true)
         var grokDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".grok", isDirectory: true)
         var agenticaDirectory = AgenticaHookInstallationManager.defaultDirectory()
-        var replacingForeignCommand = false
 
         var index = 1
         while index < arguments.count {
             switch arguments[index] {
-            case "--take-over-hook-slot":
-                replacingForeignCommand = true
-
             case "--hooks-binary":
                 index += 1
                 guard index < arguments.count else {
@@ -131,7 +125,6 @@ private struct SetupCommand {
         self.grokDirectory = grokDirectory
         self.agenticaDirectory = agenticaDirectory
         self.hooksBinary = hooksBinary
-        self.replacingForeignCommand = replacingForeignCommand
     }
 
     func run() throws {
@@ -351,15 +344,16 @@ private struct SetupCommand {
         }
 
         let manager = AgenticaHookInstallationManager(agenticaDirectory: agenticaDirectory)
-        let status = try manager.install(
-            hooksBinaryURL: hooksBinary,
-            replacingForeignCommand: replacingForeignCommand
-        )
+        let status = try manager.install(hooksBinaryURL: hooksBinary)
 
         print("Installed Open Island agentica hooks.")
         print("Agentica dir: \(status.agenticaDirectory.path)")
         print("Config: \(status.configURL.path)")
+        print("Consumer: \(AgenticaHookInstaller.consumerName)")
         print("Hooks binary: \(hooksBinary.path)")
+        if !status.otherConsumerNames.isEmpty {
+            print("Sharing the wire with: \(status.otherConsumerNames.joined(separator: ", "))")
+        }
         print("Restart the agentica CLI: settings.hooks is read once at startup.")
     }
 
@@ -381,9 +375,8 @@ private struct SetupCommand {
         print("Agentica dir: \(status.agenticaDirectory.path)")
         print("Config: \(status.configURL.path)")
         print("Managed hooks present: \(status.managedHooksPresent ? "yes" : "no")")
-        if let foreign = status.foreignHookCommand {
-            print("Hook slot held by: \(foreign)")
-            print("agentica runs one hook command; pass --take-over-hook-slot to replace it.")
+        if !status.otherConsumerNames.isEmpty {
+            print("Other consumers: \(status.otherConsumerNames.joined(separator: ", "))")
         }
         if let hooksBinary {
             print("Hooks binary: \(hooksBinary.path)")
@@ -419,7 +412,7 @@ private enum SetupError: Error, LocalizedError {
               swift run OpenIslandSetup installGrok [--hooks-binary /abs/path/to/OpenIslandHooks] [--grok-dir /abs/path/to/.grok]
               swift run OpenIslandSetup uninstallGrok [--grok-dir /abs/path/to/.grok]
               swift run OpenIslandSetup statusGrok [--hooks-binary /abs/path/to/OpenIslandHooks] [--grok-dir /abs/path/to/.grok]
-              swift run OpenIslandSetup installAgentica [--hooks-binary /abs/path/to/OpenIslandHooks] [--agentica-dir /abs/path/to/.agentica] [--take-over-hook-slot]
+              swift run OpenIslandSetup installAgentica [--hooks-binary /abs/path/to/OpenIslandHooks] [--agentica-dir /abs/path/to/.agentica]
               swift run OpenIslandSetup uninstallAgentica [--agentica-dir /abs/path/to/.agentica]
               swift run OpenIslandSetup statusAgentica [--hooks-binary /abs/path/to/OpenIslandHooks] [--agentica-dir /abs/path/to/.agentica]
             """

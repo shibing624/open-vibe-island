@@ -1,28 +1,35 @@
 import Foundation
 
-/// The six events on agentica's external shell-hook wire.
+/// The eleven events on agentica's external shell-hook wire.
 ///
 /// Names are agentica's own (`agentica/shell_hooks/config.py`
 /// `SHELL_HOOK_EVENTS`) and are dotted rather than CamelCase, so they are not
 /// interchangeable with the Claude-family event names.
 ///
-/// Four are fire-and-forget notices. The two `needs.*` events are requests: the
-/// hook may print one JSON document on stdout and agentica races that reply
-/// against the answer typed in the terminal.
+/// Only the two `needs.approval` / `needs.input` events are requests: the hook
+/// may print one JSON document on stdout and agentica races that reply against
+/// the answer typed in the terminal. Everything else is a fire-and-forget notice,
+/// including `needs.resolved`, which reports the outcome of a race that is over.
 public enum AgenticaHookEventName: String, Codable, Sendable {
     case runStarted = "run.started"
     case runCompleted = "run.completed"
     case runFailed = "run.failed"
     case runCancelled = "run.cancelled"
+    case toolStarted = "tool.started"
+    case toolCompleted = "tool.completed"
+    case sessionStarted = "session.started"
+    case sessionEnded = "session.ended"
     case needsApproval = "needs.approval"
     case needsInput = "needs.input"
+    case needsResolved = "needs.resolved"
 
     /// Whether agentica reads a reply from the hook's stdout for this event.
     public var expectsReply: Bool {
         switch self {
         case .needsApproval, .needsInput:
             true
-        case .runStarted, .runCompleted, .runFailed, .runCancelled:
+        case .runStarted, .runCompleted, .runFailed, .runCancelled,
+             .toolStarted, .toolCompleted, .sessionStarted, .sessionEnded, .needsResolved:
             false
         }
     }
@@ -40,61 +47,141 @@ public enum AgenticaHookDecision: String, Codable, Sendable {
     case denyPrefix = "deny_prefix"
 }
 
+/// Who ended a `needs.*` race, as reported by `needs.resolved`.
+public enum AgenticaHookDecider: String, Codable, Sendable {
+    case terminal
+    case hook
+    case cancelled
+}
+
 /// The single JSON document a hook may print back to agentica.
 ///
-/// Optional fields are omitted rather than encoded as `null`: agentica reads one
-/// key per event and an unexpected shape costs a decision.
+/// `request_id` is not optional in practice: agentica's `parse_reply` drops any
+/// reply whose `request_id` does not match the request it sent, so a directive
+/// without one is silently ignored. That failure would look exactly like "the
+/// user never answered", which is why the two reply cases are only reachable
+/// through factories that demand the id — the compiler refuses to let a caller
+/// forget it.
 public struct AgenticaHookDirective: Equatable, Codable, Sendable {
+    public var requestID: String?
     public var decision: AgenticaHookDecision?
     public var answer: String?
 
-    public init(decision: AgenticaHookDecision? = nil, answer: String? = nil) {
+    /// Print nothing: agentica falls back to the terminal prompt.
+    public static let noDecision = AgenticaHookDirective()
+
+    public static func decision(
+        _ decision: AgenticaHookDecision,
+        requestID: String
+    ) -> AgenticaHookDirective {
+        AgenticaHookDirective(requestID: requestID, decision: decision)
+    }
+
+    public static func answer(_ answer: String, requestID: String) -> AgenticaHookDirective {
+        AgenticaHookDirective(requestID: requestID, answer: answer)
+    }
+
+    private init(
+        requestID: String? = nil,
+        decision: AgenticaHookDecision? = nil,
+        answer: String? = nil
+    ) {
+        self.requestID = requestID
         self.decision = decision
         self.answer = answer
     }
 
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        requestID = try container.decodeIfPresent(String.self, forKey: .requestID)
+        decision = try container.decodeIfPresent(AgenticaHookDecision.self, forKey: .decision)
+        answer = try container.decodeIfPresent(String.self, forKey: .answer)
+    }
+
+    /// Whether this directive carries something agentica could act on.
+    public var isEmpty: Bool {
+        decision == nil && answer == nil
+    }
+
     private enum CodingKeys: String, CodingKey {
+        case requestID = "request_id"
         case decision
         case answer
     }
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(requestID, forKey: .requestID)
         try container.encodeIfPresent(decision, forKey: .decision)
         try container.encodeIfPresent(answer, forKey: .answer)
+    }
+}
+
+/// Process identity agentica attaches to every payload.
+///
+/// Mirrors the consumed half of `agentica/notify/transport.py` `build_transport`.
+/// agentica also sends `ppid` and an attach endpoint; neither is modelled because
+/// Open Island tracks agentica rows by event activity and does not implement
+/// attaching to a running agent. Wiring process-based liveness later would start
+/// by adding `ppid` back here.
+public struct AgenticaHookTransport: Equatable, Codable, Sendable {
+    public var cwd: String?
+    public var tty: String?
+
+    public init(cwd: String? = nil, tty: String? = nil) {
+        self.cwd = cwd
+        self.tty = tty
     }
 }
 
 /// The document agentica hands the hook on stdin, plus the terminal context the
 /// hook binary resolves locally.
 ///
-/// Every field except `hookEventName` is optional because agentica omits empty
-/// values instead of sending nulls (`agentica/shell_hooks/protocol.py`).
+/// `hookEventName` and `sessionID` are the only guaranteed fields: agentica
+/// always sends a session id, falling back to a per-process UUID. Everything else
+/// is omitted rather than sent as null when empty
+/// (`agentica/shell_hooks/protocol.py`), so a missing key and an empty string are
+/// genuinely different states.
+///
+/// This models the fields Open Island actually reads, not the whole wire.
+/// agentica also sends `run_id`, `agent_name`, `duration_seconds`, `had_response`,
+/// `title`, and — on `session.started` — `model`, `profile`, `permission_mode` and
+/// `transcript_path`. The model badge would be the obvious next use for those, but
+/// the existing badge path is `ClaudeSessionMetadata`, which is Claude-shaped;
+/// agentica needs a source-neutral one first.
 public struct AgenticaHookPayload: Equatable, Codable, Sendable {
     public var hookEventName: AgenticaHookEventName
-    public var sessionID: String?
+    public var sessionID: String
+    public var transport: AgenticaHookTransport?
     public var cwd: String?
-    public var runID: String?
+    /// Correlates a `needs.*` request with its reply and its `needs.resolved`.
+    public var requestID: String?
     /// The run's anchor text: the user's message on an ordinary turn, the goal
     /// objective in a goal-driven session. Not "what the user just typed".
     public var prompt: String?
     public var options: [String]?
 
     // run.* notices
-    public var agentName: String?
-    public var durationSeconds: Double?
-    public var hadResponse: Bool?
     public var reason: String?
     public var error: String?
     public var answer: String?
-    public var title: String?
 
-    // needs.approval
+    // tool.* notices, and the metadata slice of needs.approval
     public var toolName: String?
     public var toolCallID: String?
-    public var question: String?
     public var preview: String?
+    public var ok: Bool?
+
+    // needs.approval / needs.input
+    public var question: String?
     public var similarLabel: String?
+
+    /// `session.started` only: `"startup"` or `"resume"`.
+    public var source: String?
+
+    // needs.resolved
+    public var decidedBy: AgenticaHookDecider?
+    public var decision: AgenticaHookDecision?
 
     // Resolved by the hook binary, not sent by agentica.
     public var terminalApp: String?
@@ -105,22 +192,23 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case hookEventName = "hook_event_name"
         case sessionID = "session_id"
+        case transport
         case cwd
-        case runID = "run_id"
+        case requestID = "request_id"
         case prompt
         case options
-        case agentName = "agent_name"
-        case durationSeconds = "duration_seconds"
-        case hadResponse = "had_response"
         case reason
         case error
         case answer
-        case title
         case toolName = "tool_name"
         case toolCallID = "tool_call_id"
-        case question
         case preview
+        case ok
+        case question
         case similarLabel = "similar_label"
+        case source
+        case decidedBy = "decided_by"
+        case decision
         case terminalApp = "terminal_app"
         case terminalSessionID = "terminal_session_id"
         case terminalTTY = "terminal_tty"
@@ -129,23 +217,24 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
 
     public init(
         hookEventName: AgenticaHookEventName,
-        sessionID: String? = nil,
+        sessionID: String,
+        transport: AgenticaHookTransport? = nil,
         cwd: String? = nil,
-        runID: String? = nil,
+        requestID: String? = nil,
         prompt: String? = nil,
         options: [String]? = nil,
-        agentName: String? = nil,
-        durationSeconds: Double? = nil,
-        hadResponse: Bool? = nil,
         reason: String? = nil,
         error: String? = nil,
         answer: String? = nil,
-        title: String? = nil,
         toolName: String? = nil,
         toolCallID: String? = nil,
-        question: String? = nil,
         preview: String? = nil,
+        ok: Bool? = nil,
+        question: String? = nil,
         similarLabel: String? = nil,
+        source: String? = nil,
+        decidedBy: AgenticaHookDecider? = nil,
+        decision: AgenticaHookDecision? = nil,
         terminalApp: String? = nil,
         terminalSessionID: String? = nil,
         terminalTTY: String? = nil,
@@ -153,22 +242,23 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
     ) {
         self.hookEventName = hookEventName
         self.sessionID = sessionID
+        self.transport = transport
         self.cwd = cwd
-        self.runID = runID
+        self.requestID = requestID
         self.prompt = prompt
         self.options = options
-        self.agentName = agentName
-        self.durationSeconds = durationSeconds
-        self.hadResponse = hadResponse
         self.reason = reason
         self.error = error
         self.answer = answer
-        self.title = title
         self.toolName = toolName
         self.toolCallID = toolCallID
-        self.question = question
         self.preview = preview
+        self.ok = ok
+        self.question = question
         self.similarLabel = similarLabel
+        self.source = source
+        self.decidedBy = decidedBy
+        self.decision = decision
         self.terminalApp = terminalApp
         self.terminalSessionID = terminalSessionID
         self.terminalTTY = terminalTTY
@@ -182,25 +272,15 @@ public extension AgenticaHookPayload {
     static let sessionIDPrefix = "agentica-"
 
     var workingDirectory: String {
-        cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
+        cwd ?? transport?.cwd ?? FileManager.default.homeDirectoryForCurrentUser.path
     }
 
     var workspaceName: String {
         WorkspaceNameResolver.workspaceName(for: workingDirectory)
     }
 
-    /// The island's session id.
-    ///
-    /// `session_id` is optional on the wire — a run dispatched without a live
-    /// `Agent` carries none — so the working directory is the fallback key. That
-    /// merges concurrent runs in one directory into a single row, which is
-    /// strictly better than the alternative of dropping the event.
     var resolvedSessionID: String {
-        if let sessionID, !sessionID.isEmpty {
-            return Self.sessionIDPrefix + sessionID
-        }
-
-        return Self.sessionIDPrefix + "cwd-" + workingDirectory
+        Self.sessionIDPrefix + sessionID
     }
 
     var sessionTitle: String {
@@ -212,9 +292,9 @@ public extension AgenticaHookPayload {
             terminalApp: terminalApp ?? "Terminal",
             workspaceName: workspaceName,
             paneTitle: terminalTitle ?? "Agentica \(workspaceName)",
-            workingDirectory: cwd,
+            workingDirectory: workingDirectory,
             terminalSessionID: terminalSessionID,
-            terminalTTY: terminalTTY
+            terminalTTY: terminalTTY ?? transport?.tty
         )
     }
 
@@ -226,7 +306,25 @@ public extension AgenticaHookPayload {
         clipped(answer)
     }
 
+    /// The tool line for the island's activity row, e.g. `read_file a.py`.
+    ///
+    /// agentica sanitizes `preview` before sending it, so it is safe to display
+    /// as-is; the raw tool arguments are never on this wire.
+    var toolActivity: String? {
+        guard let toolName, !toolName.isEmpty else { return clipped(preview) }
+        guard let detail = clipped(preview) else { return toolName }
+        return "\(toolName) \(detail)"
+    }
+
     /// Human-facing one-liner for the island row.
+    ///
+    /// `run.completed` ends a *turn*, and in a goal-driven session that means the
+    /// whole goal: agentica defers the per-lap completions and releases exactly
+    /// one when the goal finishes. So this never needs to guess whether more laps
+    /// are coming. `run.failed` and `run.cancelled` are *not* deferred, so a
+    /// failing lap reports immediately even if the goal carries on — which is the
+    /// only honest option, because `goal.*` is deliberately kept off this wire and
+    /// a consumer therefore cannot know a goal is driving.
     var implicitSummary: String {
         switch hookEventName {
         case .runStarted:
@@ -241,10 +339,27 @@ public extension AgenticaHookPayload {
         case .runCancelled:
             let detail = clipped(reason)
             return detail.map { "Agentica run cancelled: \($0)" } ?? "Agentica run was cancelled."
+        case .toolStarted:
+            return toolActivity ?? "Agentica is running a tool."
+        case .toolCompleted:
+            if ok == false {
+                let detail = clipped(error)
+                let name = toolName ?? "tool"
+                return detail.map { "\(name) failed: \($0)" } ?? "\(name) failed."
+            }
+            return toolActivity ?? "Agentica finished a tool."
+        case .sessionStarted:
+            return source == "resume"
+                ? "Agentica resumed a session in \(workspaceName)."
+                : "Agentica started in \(workspaceName)."
+        case .sessionEnded:
+            return clipped(reason).map { "Agentica session ended: \($0)" } ?? "Agentica session ended."
         case .needsApproval:
             return approvalTitle
         case .needsInput:
             return questionTitle
+        case .needsResolved:
+            return "Agentica request resolved."
         }
     }
 
@@ -294,10 +409,6 @@ public extension AgenticaHookPayload {
         )
     }
 
-    /// agentica also accepts `allow_prefix` / `deny_prefix`, which apply the
-    /// decision to every similar call. Open Island does not offer them: the
-    /// permission card has exactly two actions, and a decision that silently
-    /// covers future calls is not something to infer from a two-button tap.
     func withRuntimeContext(environment: [String: String]) -> AgenticaHookPayload {
         withRuntimeContext(
             environment: environment,
@@ -306,6 +417,13 @@ public extension AgenticaHookPayload {
         )
     }
 
+    /// Fills in which terminal this run belongs to.
+    ///
+    /// The TTY comes from agentica's `transport` block when it is there: agentica
+    /// reads it from the agent's own stdin, which is the authoritative answer.
+    /// Only the terminal *app* and its pane identifier have to be resolved
+    /// locally, because those are facts about this machine's UI rather than about
+    /// the agent process.
     func withRuntimeContext(
         environment: [String: String],
         currentTTYProvider: () -> String?,
@@ -318,7 +436,7 @@ public extension AgenticaHookPayload {
         }
 
         if payload.terminalTTY == nil {
-            payload.terminalTTY = currentTTYProvider()
+            payload.terminalTTY = transport?.tty ?? currentTTYProvider()
         }
 
         guard HookTerminalContext.supportsFocusedWindowLocator(payload.terminalApp),
@@ -363,11 +481,7 @@ public enum AgenticaHookOutputEncoder {
     /// falls back to the terminal prompt. That is the correct fail-open shape
     /// for every notice event and for a request the desktop declined to answer.
     public static func standardOutput(for response: BridgeResponse) throws -> Data? {
-        guard case let .agenticaHookDirective(directive) = response else {
-            return nil
-        }
-
-        guard directive.decision != nil || directive.answer != nil else {
+        guard case let .agenticaHookDirective(directive) = response, !directive.isEmpty else {
             return nil
         }
 

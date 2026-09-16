@@ -30,9 +30,6 @@ final class HookInstallationCoordinator {
     var kimiHookStatus: KimiHookInstallationStatus?
     var grokHookStatus: GrokHookInstallationStatus?
     var agenticaHookStatus: AgenticaHookInstallationStatus?
-    /// Set when an install was refused because another program's command holds
-    /// agentica's single hook slot. Cleared once the user answers.
-    var agenticaHookSlotConflict: String?
     var piExtensionStatus: PiExtensionInstallationStatus?
     var ohMyPiExtensionStatus: PiExtensionInstallationStatus?
     var claudeStatusLineStatus: ClaudeStatusLineInstallationStatus?
@@ -417,11 +414,10 @@ final class HookInstallationCoordinator {
         }
 
         if status.managedHooksPresent {
-            return "managed hooks present · restart the agentica CLI to pick them up"
-        }
-
-        if let foreign = status.foreignHookCommand {
-            return "hook slot held by \(URL(fileURLWithPath: foreign).lastPathComponent)"
+            let shared = status.otherConsumerNames.isEmpty
+                ? ""
+                : " · sharing with \(status.otherConsumerNames.joined(separator: ", "))"
+            return "managed hooks present\(shared) · restart the agentica CLI to pick them up"
         }
 
         return "no managed Agentica hooks"
@@ -1224,17 +1220,14 @@ final class HookInstallationCoordinator {
         }
     }
 
-    func installAgenticaHooks(replacingForeignCommand: Bool = false) {
+    func installAgenticaHooks() {
         guard let hooksBinaryURL else {
             onStatusMessage?("Could not find a local OpenIslandHooks binary. Build the package first.")
             return
         }
 
         updateAgenticaHooks(userMessage: "Installing Agentica hooks.", intent: .installed) { manager in
-            try manager.install(
-                hooksBinaryURL: hooksBinaryURL,
-                replacingForeignCommand: replacingForeignCommand
-            )
+            try manager.install(hooksBinaryURL: hooksBinaryURL)
         }
     }
 
@@ -1560,13 +1553,6 @@ final class HookInstallationCoordinator {
                 } else {
                     self.onStatusMessage?("Agentica hooks are not installed.")
                 }
-            } catch let AgenticaHookInstallerError.foreignHookCommand(command) {
-                // Not a failure to report and forget: agentica runs one hook
-                // command, so the user has to decide whether Open Island may
-                // take the wire from whatever holds it. The intent is left
-                // untouched so startup does not keep retrying this.
-                self.agenticaHookSlotConflict = command
-                self.onStatusMessage?("agentica's hook slot is held by \(command).")
             } catch {
                 self.onStatusMessage?("Agentica hook update failed: \(error.localizedDescription)")
             }

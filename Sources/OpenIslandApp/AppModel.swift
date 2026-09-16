@@ -149,10 +149,6 @@ final class AppModel {
     var agenticaHookStatus: AgenticaHookInstallationStatus? { hooks.agenticaHookStatus }
     var agenticaHookStatusTitle: String { hooks.agenticaHookStatusTitle }
     var agenticaHookStatusSummary: String { hooks.agenticaHookStatusSummary }
-    var agenticaHookSlotConflict: String? {
-        get { hooks.agenticaHookSlotConflict }
-        set { hooks.agenticaHookSlotConflict = newValue }
-    }
     var piExtensionInstalled: Bool { hooks.piExtensionInstalled }
     var ohMyPiExtensionInstalled: Bool { hooks.ohMyPiExtensionInstalled }
     var isPiSetupBusy: Bool { hooks.isPiSetupBusy }
@@ -216,7 +212,6 @@ final class AppModel {
     func installGeminiHooks() { hooks.installGeminiHooks() }
     func uninstallGeminiHooks() { hooks.uninstallGeminiHooks() }
     func installAgenticaHooks() { hooks.installAgenticaHooks() }
-    func takeOverAgenticaHookSlot() { hooks.installAgenticaHooks(replacingForeignCommand: true) }
     func uninstallAgenticaHooks() { hooks.uninstallAgenticaHooks() }
     func refreshKimiHookStatus() { hooks.refreshKimiHookStatus() }
     func installKimiHooks() { hooks.installKimiHooks() }

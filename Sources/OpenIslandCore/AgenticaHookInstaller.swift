@@ -26,22 +26,17 @@ public struct AgenticaHookFileMutation: Equatable, Sendable {
 
 public enum AgenticaHookInstallerError: Error, LocalizedError {
     case unsupportedConfigShape(String)
-    case foreignHookCommand(String)
 
     public var errorDescription: String? {
         switch self {
         case let .unsupportedConfigShape(detail):
             "Open Island could not edit ~/.agentica/config.yaml safely: \(detail) "
-                + "Add the settings.hooks block by hand instead."
-        case let .foreignHookCommand(command):
-            "agentica's hook wire is already taken by `\(command)`. agentica runs "
-                + "exactly one hook command, so installing Open Island would disable "
-                + "that one. Remove it first, or install with takeover."
+                + "Add the settings.hooks consumer by hand instead."
         }
     }
 }
 
-/// Installs Open Island into agentica's `settings.hooks` block.
+/// Installs Open Island as a named consumer in agentica's `settings.hooks`.
 ///
 /// ## Why this edits text instead of round-tripping a parser
 ///
@@ -51,13 +46,23 @@ public enum AgenticaHookInstallerError: Error, LocalizedError {
 /// has no comment model at all, so loading and re-serializing this file would
 /// silently delete the user's comments on every install and uninstall.
 ///
-/// So the edit is textual and scoped: only the `settings.hooks` sub-block is
-/// rewritten, every other byte is copied through. The safety property that makes
-/// that acceptable is that an unrecognized shape is **refused, never guessed** —
-/// see `unsupportedConfigShape`. A wrong guess here would either corrupt the file
-/// or, worse, write a duplicate key that makes agentica fall back to an empty
-/// config and quietly lose every profile.
+/// So the edit is textual and scoped: only our own consumer entry is rewritten,
+/// every other byte is copied through. The safety property that makes that
+/// acceptable is that an unrecognized shape is **refused, never guessed** — see
+/// `unsupportedConfigShape`. A wrong guess here would either corrupt the file or,
+/// worse, write a duplicate key that makes agentica fall back to an empty config
+/// and quietly lose every profile.
+///
+/// ## Why there is no takeover
+///
+/// `settings.hooks.consumers` is a list of named entries, and agentica fans every
+/// event out to all of them. So a hook wire is not a slot to win: Open Island owns
+/// the entry called `open-island` and never reads, moves or deletes anyone else's.
 public enum AgenticaHookInstaller {
+    /// Our identity in `settings.hooks.consumers`. This name *is* the ownership
+    /// record — install, refresh and uninstall all key off it.
+    public static let consumerName = "open-island"
+
     /// agentica takes an argv list, not a shell string: it refuses a string
     /// rather than inventing quoting rules. So the managed hook is three
     /// elements and needs no shell quoting even though the installed binary path
@@ -66,43 +71,16 @@ public enum AgenticaHookInstaller {
         [binaryPath, "--source", "agentica"]
     }
 
-    private static let managedBinaryNames: Set<String> = ["OpenIslandHooks", "VibeIslandHooks"]
-
-    /// Installs the managed hook command into `settings.hooks`.
-    ///
-    /// `replacingForeignCommand` decides what happens when the wire is already
-    /// held by someone else's command. agentica runs **exactly one** hook
-    /// command, so two desktop consumers cannot share it — installing over one is
-    /// disabling it. That is a choice for the user to make, not for an installer
-    /// to make silently, so the default is to refuse.
+    /// Adds or refreshes our consumer entry, leaving every other consumer alone.
     public static func installConfigYAML(
         existingText: String?,
-        hookCommand: [String],
-        replacingForeignCommand: Bool = false
+        hookCommand: [String]
     ) throws -> AgenticaHookFileMutation {
         let original = existingText ?? ""
         var lines = original.isEmpty ? [] : original.components(separatedBy: "\n")
         try rejectTabIndentation(lines)
 
-        guard let settings = topLevelKey("settings", in: lines) else {
-            let appended = appendSettingsBlock(to: lines, hookCommand: hookCommand)
-            let text = appended.joined(separator: "\n")
-            return AgenticaHookFileMutation(
-                contents: text,
-                changed: text != original,
-                managedHooksPresent: true
-            )
-        }
-
-        try rejectInlineValue(on: lines[settings.keyIndex], key: "settings")
-
-        let childIndent = childIndentation(of: lines, region: settings.childRange)
-
-        guard let hooks = childKey("hooks", in: lines, region: settings.childRange, indent: childIndent) else {
-            lines.insert(
-                contentsOf: renderHooksBlock(indent: childIndent, hookCommand: hookCommand),
-                at: insertionIndex(in: lines, region: settings.childRange)
-            )
+        func result() -> AgenticaHookFileMutation {
             let text = lines.joined(separator: "\n")
             return AgenticaHookFileMutation(
                 contents: text,
@@ -111,51 +89,88 @@ public enum AgenticaHookInstaller {
             )
         }
 
-        try rejectInlineValue(on: lines[hooks.keyIndex], key: "settings.hooks")
+        guard let settings = topLevelKey("settings", in: lines) else {
+            lines = appendSettingsBlock(to: lines, hookCommand: hookCommand)
+            return result()
+        }
 
-        let block = Array(lines[hooks.keyIndex..<hooks.endIndex])
+        try rejectInlineValue(on: lines[settings.keyIndex], key: "settings")
+        let settingsChildIndent = childIndentation(of: lines, region: settings.childRange)
 
-        if blockReferencesManagedBinary(block) {
-            // Our own block: rewrite `enabled` and `command` where they sit and
-            // leave everything else — a hand-tuned `events:` gate, the comments
-            // the user wrote above it — exactly as found.
-            lines.replaceSubrange(
-                hooks.keyIndex..<hooks.endIndex,
-                with: refreshedManagedBlock(block, indent: childIndent, hookCommand: hookCommand)
+        guard let hooks = childKey(
+            "hooks",
+            in: lines,
+            region: settings.childRange,
+            indent: settingsChildIndent
+        ) else {
+            lines.insert(
+                contentsOf: renderHooksBlock(indent: settingsChildIndent, hookCommand: hookCommand),
+                at: insertionIndex(in: lines, region: settings.childRange)
             )
-        } else {
-            guard replacingForeignCommand else {
-                throw AgenticaHookInstallerError.foreignHookCommand(
-                    foreignCommandDescription(in: block) ?? "another hook command"
-                )
-            }
+            return result()
+        }
 
-            // Taking the wire over is a full replacement: the previous owner's
-            // `events:` gating described what *they* wanted to hear about, and
-            // inheriting it would silently mute our own events.
-            lines.replaceSubrange(
-                hooks.keyIndex..<hooks.endIndex,
-                with: renderHooksBlock(indent: childIndent, hookCommand: hookCommand)
+        try rejectInlineValue(on: lines[hooks.keyIndex], key: "settings.hooks")
+        let hooksChildIndent = childIndentation(of: lines, region: hooks.childRange)
+
+        // `enabled` first: it moves indices below it, and `consumers` is looked up
+        // fresh afterwards.
+        lines = enablingHooks(lines, hooks: hooks, indent: hooksChildIndent)
+
+        guard let refreshedHooks = childKey(
+            "hooks",
+            in: lines,
+            region: topLevelKey("settings", in: lines)?.childRange ?? 0..<lines.count,
+            indent: settingsChildIndent
+        ) else {
+            throw AgenticaHookInstallerError.unsupportedConfigShape(
+                "`settings.hooks` disappeared while editing."
             )
         }
 
-        let text = lines.joined(separator: "\n")
-        return AgenticaHookFileMutation(
-            contents: text,
-            changed: text != original,
-            managedHooksPresent: true
-        )
+        guard let consumers = childKey(
+            "consumers",
+            in: lines,
+            region: refreshedHooks.childRange,
+            indent: hooksChildIndent
+        ) else {
+            lines.insert(
+                contentsOf: renderConsumersBlock(indent: hooksChildIndent, hookCommand: hookCommand),
+                at: insertionIndex(in: lines, region: refreshedHooks.childRange)
+            )
+            return result()
+        }
+
+        try rejectInlineValue(on: lines[consumers.keyIndex], key: "settings.hooks.consumers")
+
+        let itemIndent = childIndentation(of: lines, region: consumers.childRange)
+        let items = sequenceItems(in: lines, region: consumers.childRange, indent: itemIndent)
+
+        if let ours = items.first(where: { consumerName(of: lines, item: $0, indent: itemIndent) == consumerName }) {
+            lines.replaceSubrange(
+                ours,
+                with: try refreshedConsumerItem(
+                    Array(lines[ours]),
+                    indent: itemIndent,
+                    hookCommand: hookCommand
+                )
+            )
+        } else {
+            lines.insert(
+                contentsOf: renderConsumerItem(indent: itemIndent, hookCommand: hookCommand),
+                at: insertionIndex(in: lines, region: consumers.childRange)
+            )
+        }
+
+        return result()
     }
 
-    /// Removes the managed `settings.hooks` block.
+    /// Removes our consumer entry and nothing else.
     ///
-    /// A `hooks` block that does not point at our binary is left alone: the user
-    /// may run their own notifier on this wire, and agentica supports exactly one
-    /// command, so deleting theirs would be silently taking the channel.
-    ///
-    /// The now-childless `settings:` key is deliberately kept. agentica reads a
-    /// non-mapping `settings` as "no settings", so it is harmless, and removing
-    /// it would mean deciding which of the surrounding comments belonged to it.
+    /// Another program's entry on this wire is theirs; a `consumers:` key left
+    /// with no items of ours is left as it is, because agentica reads an empty
+    /// list as "no consumers" and deleting the key would mean deciding which of
+    /// the surrounding comments belonged to it.
     public static func uninstallConfigYAML(existingText: String?) throws -> AgenticaHookFileMutation {
         guard let original = existingText, !original.isEmpty else {
             return AgenticaHookFileMutation(contents: nil, changed: false, managedHooksPresent: false)
@@ -164,70 +179,60 @@ public enum AgenticaHookInstaller {
         var lines = original.components(separatedBy: "\n")
         try rejectTabIndentation(lines)
 
-        guard let settings = topLevelKey("settings", in: lines) else {
-            return AgenticaHookFileMutation(contents: original, changed: false, managedHooksPresent: false)
+        func unchanged() -> AgenticaHookFileMutation {
+            AgenticaHookFileMutation(contents: original, changed: false, managedHooksPresent: false)
         }
 
-        try rejectInlineValue(on: lines[settings.keyIndex], key: "settings")
+        guard let location = locateOurConsumer(in: lines) else { return unchanged() }
 
-        let childIndent = childIndentation(of: lines, region: settings.childRange)
-        guard let hooks = childKey("hooks", in: lines, region: settings.childRange, indent: childIndent) else {
-            return AgenticaHookFileMutation(contents: original, changed: false, managedHooksPresent: false)
-        }
-
-        guard blockReferencesManagedBinary(Array(lines[hooks.keyIndex..<hooks.endIndex])) else {
-            return AgenticaHookFileMutation(contents: original, changed: false, managedHooksPresent: false)
-        }
-
-        lines.removeSubrange(hooks.keyIndex..<hooks.endIndex)
+        lines.removeSubrange(location.item)
         let text = lines.joined(separator: "\n")
         return AgenticaHookFileMutation(
             contents: text,
             changed: text != original,
-            managedHooksPresent: true
+            managedHooksPresent: false
         )
     }
 
-    /// Whether the config currently routes agentica's hook wire at our binary.
+    /// Whether agentica will currently fan events out to us.
     public static func hasManagedHooks(in text: String?) -> Bool {
         guard let text, !text.isEmpty else { return false }
-
         let lines = text.components(separatedBy: "\n")
-        guard (try? rejectTabIndentation(lines)) != nil,
-              let settings = topLevelKey("settings", in: lines) else {
-            return false
-        }
+        guard let location = locateOurConsumer(in: lines) else { return false }
 
-        let childIndent = childIndentation(of: lines, region: settings.childRange)
-        guard let hooks = childKey("hooks", in: lines, region: settings.childRange, indent: childIndent) else {
-            return false
-        }
-
-        let block = Array(lines[hooks.keyIndex..<hooks.endIndex])
-        return blockReferencesManagedBinary(block) && blockEnablesHooks(block)
+        let block = Array(lines[location.item])
+        return blockEnablesHooks(Array(lines[location.hooks])) && !blockDisablesConsumer(block)
     }
 
-    /// The command holding agentica's single hook slot when it is not ours.
+    /// The other programs listening on this wire, for display only.
     ///
-    /// Lets the UI say *whose* hook is in the way instead of just refusing.
-    public static func foreignHookCommand(in text: String?) -> String? {
-        guard let text, !text.isEmpty else { return nil }
-
+    /// Open Island neither needs nor takes anything from them; showing them just
+    /// makes it obvious that the wire is shared.
+    public static func otherConsumerNames(in text: String?) -> [String] {
+        guard let text, !text.isEmpty else { return [] }
         let lines = text.components(separatedBy: "\n")
         guard (try? rejectTabIndentation(lines)) != nil,
-              let settings = topLevelKey("settings", in: lines) else {
-            return nil
+              let settings = topLevelKey("settings", in: lines),
+              let hooks = childKey(
+                  "hooks",
+                  in: lines,
+                  region: settings.childRange,
+                  indent: childIndentation(of: lines, region: settings.childRange)
+              ),
+              let consumers = childKey(
+                  "consumers",
+                  in: lines,
+                  region: hooks.childRange,
+                  indent: childIndentation(of: lines, region: hooks.childRange)
+              )
+        else {
+            return []
         }
 
-        let childIndent = childIndentation(of: lines, region: settings.childRange)
-        guard let hooks = childKey("hooks", in: lines, region: settings.childRange, indent: childIndent) else {
-            return nil
-        }
-
-        let block = Array(lines[hooks.keyIndex..<hooks.endIndex])
-        guard !blockReferencesManagedBinary(block) else { return nil }
-
-        return foreignCommandDescription(in: block)
+        let itemIndent = childIndentation(of: lines, region: consumers.childRange)
+        return sequenceItems(in: lines, region: consumers.childRange, indent: itemIndent)
+            .compactMap { consumerName(of: lines, item: $0, indent: itemIndent) }
+            .filter { $0 != consumerName }
     }
 
     /// The block a user can paste by hand when the config shape is refused.
@@ -240,6 +245,17 @@ public enum AgenticaHookInstaller {
 
     private static func renderHooksBlock(indent: String, hookCommand: [String]) -> [String] {
         ["\(indent)hooks:", "\(indent)  enabled: true"]
+            + renderConsumersBlock(indent: indent + "  ", hookCommand: hookCommand)
+    }
+
+    private static func renderConsumersBlock(indent: String, hookCommand: [String]) -> [String] {
+        ["\(indent)consumers:"]
+            + renderConsumerItem(indent: indent + "  ", hookCommand: hookCommand)
+    }
+
+    /// One sequence item. `indent` is the indentation of the `-`.
+    private static func renderConsumerItem(indent: String, hookCommand: [String]) -> [String] {
+        ["\(indent)- name: \(consumerName)"]
             + renderCommand(indent: indent + "  ", hookCommand: hookCommand)
     }
 
@@ -247,32 +263,32 @@ public enum AgenticaHookInstaller {
         ["\(indent)command:"] + hookCommand.map { "\(indent)  - \(quote($0))" }
     }
 
-    /// Rewrites `enabled` and `command` in place inside a block we already own,
-    /// leaving every other line of it untouched.
-    private static func refreshedManagedBlock(
-        _ block: [String],
+    /// Rebuilds our own item: a fresh `name` and `command`, and every other child
+    /// key copied through verbatim so a hand-tuned `events:` gate survives.
+    private static func refreshedConsumerItem(
+        _ item: [String],
         indent: String,
         hookCommand: [String]
-    ) -> [String] {
-        var lines = block
-        let entryIndent = indent + "  "
-        let rendered = renderCommand(indent: entryIndent, hookCommand: hookCommand)
+    ) throws -> [String] {
+        // Normalize the `- key: …` line into an ordinary child so `name` and
+        // `command` can be found the same way wherever the user put them.
+        var mapping = item
+        let childIndent = indent + "  "
+        let firstLine = mapping[0].trimmingCharacters(in: .whitespaces)
+        guard firstLine.hasPrefix("-") else {
+            throw AgenticaHookInstallerError.unsupportedConfigShape(
+                "the `\(consumerName)` consumer does not start with a `-` item."
+            )
+        }
+        mapping[0] = childIndent + String(firstLine.dropFirst()).trimmingCharacters(in: .whitespaces)
 
-        if let command = childKey("command", in: lines, region: 1..<lines.count, indent: entryIndent) {
-            lines.replaceSubrange(command.keyIndex..<command.endIndex, with: rendered)
-        } else {
-            lines.insert(contentsOf: rendered, at: 1)
+        for key in ["name", "command"] {
+            while let block = childKey(key, in: mapping, region: 0..<mapping.count, indent: childIndent) {
+                mapping.removeSubrange(block.keyIndex..<block.endIndex)
+            }
         }
 
-        // Re-scanned rather than reusing an index: the replacement above moved
-        // every line after `command:`.
-        if let enabled = childKey("enabled", in: lines, region: 1..<lines.count, indent: entryIndent) {
-            lines[enabled.keyIndex] = "\(entryIndent)enabled: true"
-        } else {
-            lines.insert("\(entryIndent)enabled: true", at: 1)
-        }
-
-        return lines
+        return renderConsumerItem(indent: indent, hookCommand: hookCommand) + mapping
     }
 
     private static func appendSettingsBlock(to lines: [String], hookCommand: [String]) -> [String] {
@@ -287,6 +303,20 @@ public enum AgenticaHookInstaller {
         result.append("settings:")
         result.append(contentsOf: renderHooksBlock(indent: "  ", hookCommand: hookCommand))
         result.append("")
+        return result
+    }
+
+    /// Forces `settings.hooks.enabled: true`, which is the wire's master switch.
+    private static func enablingHooks(_ lines: [String], hooks: KeyBlock, indent: String) -> [String] {
+        var result = lines
+        let line = "\(indent)enabled: true"
+
+        if let enabled = childKey("enabled", in: result, region: hooks.childRange, indent: indent) {
+            result[enabled.keyIndex] = line
+        } else {
+            result.insert(line, at: hooks.keyIndex + 1)
+        }
+
         return result
     }
 
@@ -308,6 +338,86 @@ public enum AgenticaHookInstaller {
         var childRange: Range<Int> {
             (keyIndex + 1)..<endIndex
         }
+    }
+
+    /// Where our consumer entry sits, together with the `hooks` block holding it.
+    private struct ConsumerLocation {
+        let hooks: Range<Int>
+        let item: Range<Int>
+    }
+
+    private static func locateOurConsumer(in lines: [String]) -> ConsumerLocation? {
+        guard (try? rejectTabIndentation(lines)) != nil,
+              let settings = topLevelKey("settings", in: lines),
+              let hooks = childKey(
+                  "hooks",
+                  in: lines,
+                  region: settings.childRange,
+                  indent: childIndentation(of: lines, region: settings.childRange)
+              ),
+              let consumers = childKey(
+                  "consumers",
+                  in: lines,
+                  region: hooks.childRange,
+                  indent: childIndentation(of: lines, region: hooks.childRange)
+              )
+        else {
+            return nil
+        }
+
+        let itemIndent = childIndentation(of: lines, region: consumers.childRange)
+        guard let ours = sequenceItems(in: lines, region: consumers.childRange, indent: itemIndent)
+            .first(where: { consumerName(of: lines, item: $0, indent: itemIndent) == consumerName })
+        else {
+            return nil
+        }
+
+        return ConsumerLocation(hooks: hooks.keyIndex..<hooks.endIndex, item: ours)
+    }
+
+    /// The line ranges of the `- ` items directly inside a sequence.
+    private static func sequenceItems(
+        in lines: [String],
+        region: Range<Int>,
+        indent: String
+    ) -> [Range<Int>] {
+        let indentWidth = indent.count
+        var starts: [Int] = []
+
+        var index = region.lowerBound
+        while index < region.upperBound {
+            let line = lines[index]
+            if isStructuralLine(line), indentation(of: line) == indentWidth,
+               line.trimmingCharacters(in: .whitespaces).hasPrefix("-") {
+                starts.append(index)
+            }
+            index += 1
+        }
+
+        return starts.enumerated().map { position, start in
+            let next = position + 1 < starts.count ? starts[position + 1] : region.upperBound
+            // Trailing blanks and comments belong to whatever comes next, not to
+            // the item being measured, so removing an item cannot eat them.
+            var end = start + 1
+            for line in start + 1..<next where isStructuralLine(lines[line]) {
+                end = line + 1
+            }
+            return start..<max(end, start + 1)
+        }
+    }
+
+    /// The `name` of a sequence item, whether it sits on the `-` line or below it.
+    private static func consumerName(of lines: [String], item: Range<Int>, indent: String) -> String? {
+        var mapping = Array(lines[item])
+        let childIndent = indent + "  "
+        let first = mapping[0].trimmingCharacters(in: .whitespaces)
+        guard first.hasPrefix("-") else { return nil }
+        mapping[0] = childIndent + String(first.dropFirst()).trimmingCharacters(in: .whitespaces)
+
+        guard let name = childKey("name", in: mapping, region: 0..<mapping.count, indent: childIndent) else {
+            return nil
+        }
+        return scalarValue(in: mapping[name.keyIndex])
     }
 
     private static func rejectTabIndentation(_ lines: [String]) throws {
@@ -381,7 +491,8 @@ public enum AgenticaHookInstaller {
         return nil
     }
 
-    /// Indentation used by the children of a block, or two spaces when it has none yet.
+    /// Indentation used by the children of a block, or two more than the block
+    /// itself when it has none yet.
     private static func childIndentation(of lines: [String], region: Range<Int>) -> String {
         for index in region {
             let line = lines[index]
@@ -393,7 +504,8 @@ public enum AgenticaHookInstaller {
             }
         }
 
-        return "  "
+        guard region.lowerBound > 0, region.lowerBound <= lines.count else { return "  " }
+        return String(repeating: " ", count: indentation(of: lines[region.lowerBound - 1]) + 2)
     }
 
     /// Where a new child belongs: right after the last structural line of the
@@ -487,45 +599,32 @@ public enum AgenticaHookInstaller {
 
     // MARK: - Ownership
 
-    private static func blockReferencesManagedBinary(_ block: [String]) -> Bool {
-        block.contains { line in
-            guard let value = scalarValue(in: line) else { return false }
-            return managedBinaryNames.contains(URL(fileURLWithPath: value).lastPathComponent)
-        }
-    }
-
-    /// A readable name for the command occupying the hook slot.
-    ///
-    /// Prefers the first argv element, which is the executable; falls back to an
-    /// inline `command: /path` that agentica itself would refuse, because a user
-    /// who wrote one still deserves to be told what is in the way.
-    private static func foreignCommandDescription(in block: [String]) -> String? {
-        for line in block {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("-"), let value = scalarValue(in: line) else { continue }
-            return value
-        }
-
-        for line in block {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("command:"), let value = scalarValue(in: line) else { continue }
-            return value
-        }
-
-        return nil
-    }
-
     private static func blockEnablesHooks(_ block: [String]) -> Bool {
         block.contains { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard trimmed.hasPrefix("enabled:") else { return false }
-
-            let value = trimmed
-                .dropFirst("enabled:".count)
-                .trimmingCharacters(in: .whitespaces)
-                .lowercased()
-            return ["true", "yes", "on"].contains(value)
+            booleanValue(in: line, key: "enabled") == true
         }
+    }
+
+    private static func blockDisablesConsumer(_ block: [String]) -> Bool {
+        block.contains { line in
+            booleanValue(in: line, key: "enabled") == false
+        }
+    }
+
+    private static func booleanValue(in line: String, key: String) -> Bool? {
+        var trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("-") {
+            trimmed = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
+        }
+        guard trimmed.hasPrefix("\(key):") else { return nil }
+
+        let value = trimmed
+            .dropFirst("\(key):".count)
+            .trimmingCharacters(in: .whitespaces)
+            .lowercased()
+        if ["true", "yes", "on"].contains(value) { return true }
+        if ["false", "no", "off"].contains(value) { return false }
+        return nil
     }
 
     /// The scalar carried by a sequence item or a `key: value` line.
@@ -535,7 +634,8 @@ public enum AgenticaHookInstaller {
 
         if trimmed.hasPrefix("-") {
             trimmed = String(trimmed.dropFirst()).trimmingCharacters(in: .whitespaces)
-        } else if let separator = trimmed.range(of: ": ") {
+        }
+        if let separator = trimmed.range(of: ": ") {
             trimmed = String(trimmed[separator.upperBound...]).trimmingCharacters(in: .whitespaces)
         }
 

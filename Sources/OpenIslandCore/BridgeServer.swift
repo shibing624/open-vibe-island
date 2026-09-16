@@ -73,6 +73,9 @@ public final class BridgeServer: @unchecked Sendable {
 
         let clientID: UUID
         let kind: Kind
+        /// agentica drops a reply whose `request_id` does not match the request it
+        /// sent, so this has to be carried through to the directive.
+        let requestID: String
     }
 
     private let socketURL: URL
@@ -1911,9 +1914,78 @@ public final class BridgeServer: @unchecked Sendable {
             )
             send(.response(.acknowledged), to: clientID)
 
+        case .toolStarted:
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .activityUpdated(
+                    SessionActivityUpdated(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        phase: .running,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .toolCompleted:
+            ensureAgenticaSessionExists(for: payload)
+            // Still `.running`: a finished tool call is progress within a turn,
+            // not the end of one. Only `run.*` closes a turn.
+            emit(
+                .activityUpdated(
+                    SessionActivityUpdated(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        phase: .running,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .sessionStarted:
+            ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaJumpTarget(for: payload)
+            emit(
+                .activityUpdated(
+                    SessionActivityUpdated(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        phase: .completed,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
+        case .sessionEnded:
+            clearStaleAgenticaInteractionIfNeeded(for: sessionID)
+            ensureAgenticaSessionExists(for: payload)
+            emit(
+                .sessionCompleted(
+                    SessionCompleted(
+                        sessionID: sessionID,
+                        summary: payload.implicitSummary,
+                        timestamp: .now
+                    )
+                )
+            )
+            send(.response(.acknowledged), to: clientID)
+
         case .needsApproval:
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+
+            // Without a request id our reply would be discarded by agentica, and
+            // a card the user can tap but that can never take effect is worse
+            // than no card. Let the terminal own this one.
+            guard let requestID = payload.requestID else {
+                send(.response(.acknowledged), to: clientID)
+                return
+            }
+
             emit(
                 .permissionRequested(
                     PermissionRequested(
@@ -1937,12 +2009,19 @@ public final class BridgeServer: @unchecked Sendable {
             // answers in the terminal (agentica kills the hook in that case).
             pendingAgenticaInteractions[sessionID] = PendingAgenticaInteraction(
                 clientID: clientID,
-                kind: .approval(payload)
+                kind: .approval(payload),
+                requestID: requestID
             )
 
         case .needsInput:
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+
+            guard let requestID = payload.requestID else {
+                send(.response(.acknowledged), to: clientID)
+                return
+            }
+
             emit(
                 .questionAsked(
                     QuestionAsked(
@@ -1955,8 +2034,60 @@ public final class BridgeServer: @unchecked Sendable {
 
             pendingAgenticaInteractions[sessionID] = PendingAgenticaInteraction(
                 clientID: clientID,
-                kind: .question(payload)
+                kind: .question(payload),
+                requestID: requestID
             )
+
+        case .needsResolved:
+            // The race is over. When somebody else won, the card on screen is
+            // obsolete and this is the only signal that says so.
+            resolveAgenticaRequest(sessionID: sessionID, payload: payload)
+            send(.response(.acknowledged), to: clientID)
+        }
+    }
+
+    /// Dismisses a parked request that agentica reports as decided elsewhere.
+    ///
+    /// The `request_id` has to match: a `needs.resolved` for some other request
+    /// must not tear down the card the user is currently looking at.
+    private func resolveAgenticaRequest(sessionID: String, payload: AgenticaHookPayload) {
+        guard let interaction = pendingAgenticaInteractions[sessionID],
+              interaction.requestID == payload.requestID else {
+            return
+        }
+
+        pendingAgenticaInteractions.removeValue(forKey: sessionID)
+
+        // Our own win already answered this client; anything else needs the hook
+        // released so its process can exit instead of waiting to be killed.
+        if payload.decidedBy != .hook {
+            send(
+                .response(.agenticaHookDirective(.noDecision)),
+                to: interaction.clientID
+            )
+        }
+
+        emit(
+            .actionableStateResolved(
+                ActionableStateResolved(
+                    sessionID: sessionID,
+                    summary: Self.agenticaResolutionSummary(for: payload),
+                    timestamp: .now
+                )
+            )
+        )
+    }
+
+    private static func agenticaResolutionSummary(for payload: AgenticaHookPayload) -> String {
+        switch payload.decidedBy {
+        case .terminal:
+            payload.decision.map { "Answered in the terminal: \($0.rawValue)." }
+                ?? "Answered in the terminal."
+        case .cancelled:
+            "Cancelled in the terminal."
+        case .hook, .none:
+            payload.decision.map { "Answered in Open Island: \($0.rawValue)." }
+                ?? "Answered in Open Island."
         }
     }
 
@@ -1973,13 +2104,25 @@ public final class BridgeServer: @unchecked Sendable {
                     title: payload.sessionTitle,
                     tool: .agenticaCLI,
                     origin: .live,
-                    initialPhase: payload.hookEventName == .runStarted ? .running : .completed,
+                    initialPhase: Self.agenticaInitialPhase(for: payload.hookEventName),
                     summary: payload.implicitSummary,
                     timestamp: .now,
                     jumpTarget: payload.defaultJumpTarget
                 )
             )
         )
+    }
+
+    /// The phase a row starts in when the first event we saw is this one.
+    ///
+    /// `session.started` means the CLI is up but idle; a turn has not begun.
+    private static func agenticaInitialPhase(for event: AgenticaHookEventName) -> SessionPhase {
+        switch event {
+        case .runStarted, .toolStarted, .toolCompleted, .needsApproval, .needsInput:
+            .running
+        case .runCompleted, .runFailed, .runCancelled, .sessionStarted, .sessionEnded, .needsResolved:
+            .completed
+        }
     }
 
     private func synchronizeAgenticaJumpTarget(for payload: AgenticaHookPayload) {
@@ -2018,7 +2161,7 @@ public final class BridgeServer: @unchecked Sendable {
         // An empty directive prints nothing, which agentica reads as "no
         // decision". Replying at all is what lets the hook process exit instead
         // of waiting to be killed.
-        send(.response(.agenticaHookDirective(AgenticaHookDirective())), to: interaction.clientID)
+        send(.response(.agenticaHookDirective(.noDecision)), to: interaction.clientID)
         emit(
             .actionableStateResolved(
                 ActionableStateResolved(
@@ -2044,12 +2187,12 @@ public final class BridgeServer: @unchecked Sendable {
 
         switch (interaction.kind, resolution) {
         case let (.approval(payload), .allowOnce):
-            directive = AgenticaHookDirective(decision: .allow)
+            directive = .decision(.allow, requestID: interaction.requestID)
             summary = payload.toolName.map { "Approved \($0)." } ?? "Approved in Open Island."
             phase = .running
 
         case (.approval, .deny):
-            directive = AgenticaHookDirective(decision: .deny)
+            directive = .decision(.deny, requestID: interaction.requestID)
             if case let .deny(message, _) = resolution {
                 summary = message ?? "Denied in Open Island."
             } else {
@@ -2061,7 +2204,7 @@ public final class BridgeServer: @unchecked Sendable {
             // A question has no decision vocabulary on this wire. Sending nothing
             // leaves the terminal prompt as the answer path, which is the correct
             // fail-open behaviour.
-            directive = AgenticaHookDirective()
+            directive = .noDecision
             summary = "Left the question for the terminal."
             phase = .running
         }
@@ -2093,8 +2236,8 @@ public final class BridgeServer: @unchecked Sendable {
         // agentica ignores an empty answer, so an empty reply would silently
         // strand the run. Say nothing instead and let the terminal answer.
         let directive = answerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? AgenticaHookDirective()
-            : AgenticaHookDirective(answer: answerText)
+            ? AgenticaHookDirective.noDecision
+            : .answer(answerText, requestID: interaction.requestID)
 
         emit(
             .activityUpdated(

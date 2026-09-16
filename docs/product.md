@@ -33,7 +33,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 | **Kimi CLI** | Supported | Hook integration via `~/.kimi/config.toml` `[[hooks]]` (Moonshot AI). Kimi's hook payload is byte-compatible with Claude Code, so runtime reuses the Claude decode path; a dedicated TOML installer preserves user-authored hooks |
 | **Pi** | Supported | Runtime extension at `~/.pi/agent/extensions/open-island.ts`; lifecycle/tool events, session persistence, process detection, and terminal jump metadata |
 | **Oh My Pi (OMP)** | Supported | Runtime extension at `~/.omp/agent/extensions/open-island.ts`; equivalent coverage through OMP lifecycle aliases |
-| **Agentica CLI** | Supported | Hook integration via `~/.agentica/config.yaml` `settings.hooks` (`run.started`, `run.completed`, `run.failed`, `run.cancelled`, `needs.approval`, `needs.input`). Approvals and questions are answered from the island; agentica emits no tool-level or session-lifecycle events yet, so activity detail and session end are limited — see [agentica-hooks-upgrade-plan.md](agentica-hooks-upgrade-plan.md) |
+| **Agentica CLI** | Supported | Named consumer in `~/.agentica/config.yaml` `settings.hooks.consumers`, so it coexists with other desktop apps on the same wire. Covers session lifecycle, run lifecycle, per-tool activity, and approvals/questions answered from the island. Scoped to the interactive CLI — see [agentica-hooks-upgrade-plan.md](agentica-hooks-upgrade-plan.md) |
 
 ## Supported Terminals
 

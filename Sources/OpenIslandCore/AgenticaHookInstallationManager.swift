@@ -7,8 +7,8 @@ public struct AgenticaHookInstallationStatus: Equatable, Sendable {
     public var hooksBinaryURL: URL?
     public var managedHooksPresent: Bool
     public var manifest: AgenticaHookInstallerManifest?
-    /// Someone else's command in agentica's single hook slot, if any.
-    public var foreignHookCommand: String?
+    /// Other programs listening on the same wire, for display only.
+    public var otherConsumerNames: [String]
 
     public init(
         agenticaDirectory: URL,
@@ -17,7 +17,7 @@ public struct AgenticaHookInstallationStatus: Equatable, Sendable {
         hooksBinaryURL: URL?,
         managedHooksPresent: Bool,
         manifest: AgenticaHookInstallerManifest?,
-        foreignHookCommand: String?
+        otherConsumerNames: [String]
     ) {
         self.agenticaDirectory = agenticaDirectory
         self.configURL = configURL
@@ -25,7 +25,7 @@ public struct AgenticaHookInstallationStatus: Equatable, Sendable {
         self.hooksBinaryURL = hooksBinaryURL
         self.managedHooksPresent = managedHooksPresent
         self.manifest = manifest
-        self.foreignHookCommand = foreignHookCommand
+        self.otherConsumerNames = otherConsumerNames
     }
 }
 
@@ -76,18 +76,12 @@ public final class AgenticaHookInstallationManager: @unchecked Sendable {
             hooksBinaryURL: resolvedHooksBinaryURL(explicitURL: hooksBinaryURL),
             managedHooksPresent: AgenticaHookInstaller.hasManagedHooks(in: config),
             manifest: try loadManifest(),
-            foreignHookCommand: AgenticaHookInstaller.foreignHookCommand(in: config)
+            otherConsumerNames: AgenticaHookInstaller.otherConsumerNames(in: config)
         )
     }
 
-    /// - Parameter replacingForeignCommand: take over agentica's single hook slot
-    ///   even when another program holds it. Defaults to refusing, because doing
-    ///   it silently would disable that program's hook.
     @discardableResult
-    public func install(
-        hooksBinaryURL: URL,
-        replacingForeignCommand: Bool = false
-    ) throws -> AgenticaHookInstallationStatus {
+    public func install(hooksBinaryURL: URL) throws -> AgenticaHookInstallationStatus {
         try fileManager.createDirectory(at: agenticaDirectory, withIntermediateDirectories: true)
 
         let installedBinaryURL = try ManagedHooksBinary.install(
@@ -98,8 +92,7 @@ public final class AgenticaHookInstallationManager: @unchecked Sendable {
         let command = AgenticaHookInstaller.hookCommand(for: installedBinaryURL.path)
         let mutation = try AgenticaHookInstaller.installConfigYAML(
             existingText: try? readConfig(),
-            hookCommand: command,
-            replacingForeignCommand: replacingForeignCommand
+            hookCommand: command
         )
 
         try apply(mutation)
