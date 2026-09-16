@@ -28,6 +28,13 @@
 # scripts/harness.sh; the smoke path there deliberately targets the repository
 # binary rather than the installed dev bundle.
 
+# Re-exec under zsh. Running this as `sh scripts/clean-and-run.sh` ignores the
+# shebang, and the script relies on zsh glob qualifiers and modifiers, so under
+# sh it would fail on syntax rather than on anything meaningful.
+if [ -z "${ZSH_VERSION:-}" ]; then
+    exec /bin/zsh "$0" "$@"
+fi
+
 set -euo pipefail
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -45,13 +52,13 @@ process_name="OpenIslandApp"
 
 dry_run=false
 clean=true
-launch_args=()
+skip_setup=false
 
 for arg in "$@"; do
     case "$arg" in
         --dry-run)    dry_run=true ;;
         --no-clean)   clean=false ;;
-        --skip-setup) launch_args+=("--skip-setup") ;;
+        --skip-setup) skip_setup=true ;;
         *)
             echo "unknown flag: $arg" >&2
             echo "usage: $0 [--dry-run] [--no-clean] [--skip-setup]" >&2
@@ -75,7 +82,11 @@ if $clean; then
 fi
 
 say "Building and launching the dev bundle"
-zsh "$repo_root/scripts/launch-dev-app.sh" "${launch_args[@]}"
+if $skip_setup; then
+    zsh "$repo_root/scripts/launch-dev-app.sh" --skip-setup
+else
+    zsh "$repo_root/scripts/launch-dev-app.sh"
+fi
 
 say "Verifying the app is running"
 for _ in {1..10}; do
@@ -112,15 +123,20 @@ fi
 echo "running (pid $(pgrep -x "$process_name" | tr '\n' ' '))"
 
 say "Event sound themes"
-installed_packs=("$packs_dir"/*/theme.json(N))
-if (( ${#installed_packs} == 0 )); then
+# Iterating the glob directly rather than collecting an array: under `set -u`
+# zsh treats an empty array as unset, so both `"${arr[@]}"` and `${#arr}` abort
+# the script when no pack is installed — which is exactly the case this branch
+# exists to report.
+found_pack=false
+for manifest in "$packs_dir"/*/theme.json(N); do
+    found_pack=true
+    echo "  ${manifest:h:t}"
+done
+if $found_pack; then
+    echo "pick one in Settings > Sound"
+else
     echo "no sound packs installed — every event will play one macOS system sound"
     echo "install them with: ./scripts/fetch-sound-packs.sh peon"
-else
-    for manifest in "${installed_packs[@]}"; do
-        echo "  ${manifest:h:t}"
-    done
-    echo "pick one in Settings > Sound"
 fi
 
 say "Ready"
