@@ -289,32 +289,118 @@ struct SoundSettingsPane: View {
                     get: { model.isSoundMuted },
                     set: { _ in model.toggleSoundMuted() }
                 ))
+
+                HStack {
+                    Text(lang.t("settings.sound.volume"))
+                    Slider(
+                        value: Binding(
+                            get: { model.soundVolume },
+                            set: { model.soundVolume = $0 }
+                        ),
+                        in: 0...1
+                    )
+                }
             }
 
-            Section(lang.t("settings.sound.selectSound")) {
-                List(availableSounds, id: \.self) { name in
-                    Button {
-                        model.selectedSoundName = name
-                        NotificationSoundService.play(name)
-                    } label: {
-                        HStack {
-                            Text(name)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if name == model.selectedSoundName {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                                    .fontWeight(.semibold)
-                            }
-                        }
-                        .contentShape(Rectangle())
+            Section {
+                Picker(lang.t("settings.sound.theme"), selection: Binding(
+                    get: { model.soundThemeID },
+                    set: { model.soundThemeID = $0 }
+                )) {
+                    Text(lang.t("settings.sound.theme.system")).tag(EventSoundService.systemThemeID)
+                    ForEach(model.soundThemes) { theme in
+                        Text(theme.displayName).tag(theme.id)
                     }
-                    .buttonStyle(.plain)
+                }
+
+                Button(lang.t("settings.sound.theme.rescan")) {
+                    model.reloadSoundThemes()
+                }
+            } header: {
+                Text(lang.t("settings.sound.theme"))
+            } footer: {
+                // A missing pack looks exactly like a broken player, so the fix
+                // is named here instead of left to the README.
+                Text(model.soundThemes.isEmpty
+                    ? lang.t("settings.sound.theme.noPacks")
+                    : lang.t("settings.sound.theme.installHint"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let theme = model.currentSoundTheme {
+                Section(lang.t("settings.sound.theme.preview")) {
+                    // Previews are per event, not per file: the question a user
+                    // is answering is "do I like the finished sound", and a
+                    // category rotates through its files anyway.
+                    ForEach(SoundCue.allCases, id: \.self) { cue in
+                        Button {
+                            model.previewSoundCue(cue)
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(lang.t(Self.cueTitleKey(cue)))
+                                        .foregroundStyle(.primary)
+                                    if theme.isBorrowing(for: cue) {
+                                        Text(lang.t("settings.sound.theme.borrowed"))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "play.circle")
+                                    .foregroundStyle(.blue)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                Section(lang.t("settings.sound.theme.info")) {
+                    LabeledContent(lang.t("settings.sound.theme.entries"), value: "\(theme.entryCount)")
+                    LabeledContent(lang.t("settings.sound.theme.author"), value: theme.author)
+                    LabeledContent(lang.t("settings.sound.theme.license"), value: theme.license)
+                    if !theme.sourceRepo.isEmpty {
+                        LabeledContent(lang.t("settings.sound.theme.source"), value: theme.sourceRepo)
+                    }
+                }
+            } else {
+                Section(lang.t("settings.sound.selectSound")) {
+                    List(availableSounds, id: \.self) { name in
+                        Button {
+                            model.selectedSoundName = name
+                            NotificationSoundService.play(name, volume: Float(model.soundVolume))
+                        } label: {
+                            HStack {
+                                Text(name)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                if name == model.selectedSoundName {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.blue)
+                                        .fontWeight(.semibold)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
             }
         }
         .formStyle(.grouped)
         .navigationTitle(lang.t("settings.tab.sound"))
+    }
+
+    private static func cueTitleKey(_ cue: SoundCue) -> String {
+        switch cue {
+        case .sessionStart: "settings.sound.cue.sessionStart"
+        case .taskAcknowledge: "settings.sound.cue.taskAcknowledge"
+        case .taskComplete: "settings.sound.cue.taskComplete"
+        case .taskError: "settings.sound.cue.taskError"
+        case .inputRequired: "settings.sound.cue.inputRequired"
+        }
     }
 }
 

@@ -31,6 +31,7 @@ This index is the repository map for humans and coding agents. Read these files 
 ## Runtime And Product Notes
 
 - [docs/notch-surface-model.md](./notch-surface-model.md) for the island surface routing model and debug harness intent
+- [docs/sound-themes.md](./sound-themes.md) for the CESP event sound packs, which events ring, and why audio is never committed
 - [docs/app-ghostty-codex-chain.md](./app-ghostty-codex-chain.md) for terminal environment findings across the current supported chain
 
 ## Refactoring Plans

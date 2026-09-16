@@ -125,7 +125,25 @@
 /* Settings - Sound */
 "settings.sound.notifications" = "通知音效";
 "settings.sound.mute" = "靜音";
+"settings.sound.volume" = "音量";
 "settings.sound.selectSound" = "選擇音效";
+"settings.sound.theme" = "事件音效主題";
+"settings.sound.theme.system" = "系統音（所有事件同一個音）";
+"settings.sound.theme.rescan" = "重新掃描音效包";
+"settings.sound.theme.noPacks" = "尚未安裝音效包。在儲存庫裡執行 ./scripts/fetch-sound-packs.sh，然後點重新掃描。";
+"settings.sound.theme.installHint" = "音效包是下載的，不隨應用程式散布。用 ./scripts/fetch-sound-packs.sh 新增更多。";
+"settings.sound.theme.preview" = "依事件試聽";
+"settings.sound.theme.borrowed" = "這個包沒有這一類的音，借用了包內其他音。";
+"settings.sound.theme.info" = "音效包資訊";
+"settings.sound.theme.entries" = "音數";
+"settings.sound.theme.author" = "作者";
+"settings.sound.theme.license" = "授權";
+"settings.sound.theme.source" = "來源";
+"settings.sound.cue.sessionStart" = "新工作階段建立（不觸發——你此刻就在終端機前）";
+"settings.sound.cue.taskAcknowledge" = "工作階段的第一次送出";
+"settings.sound.cue.taskComplete" = "這一輪跑完";
+"settings.sound.cue.taskError" = "這一輪出錯";
+"settings.sound.cue.inputRequired" = "等你核准或回答";
 
 /* Settings - Setup */
 "settings.tab.setup" = "安裝引導";

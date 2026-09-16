@@ -376,7 +376,7 @@ final class OverlayUICoordinator {
 
     // MARK: - Notification surfaces
 
-    func presentNotificationSurface(_ surface: IslandSurface) {
+    func presentNotificationSurface(_ surface: IslandSurface, cue: SoundCue?) {
         guard surface.isNotificationCard else {
             return
         }
@@ -386,7 +386,12 @@ final class OverlayUICoordinator {
         }
 
         appModel?.measuredNotificationContentHeight = 0
-        NotificationSoundService.playNotification(isMuted: isSoundMuted)
+        // Sound rides with the card rather than with the raw event, so the
+        // duplicate/stale/frontmost suppression that already guards the card
+        // guards the sound too — an event that shows nothing must not ring.
+        if let cue {
+            EventSoundService.shared.play(cue, isMuted: isSoundMuted)
+        }
         notchOpen(reason: .notification, surface: surface)
     }
 

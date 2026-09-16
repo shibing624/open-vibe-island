@@ -113,19 +113,25 @@ public struct SessionCompleted: Equatable, Codable, Sendable {
     /// turn-level completion (`Stop`/`StopFailure`) where the CLI is still
     /// running and waiting for the next user prompt.
     public var isSessionEnd: Bool?
+    /// When `true`, the turn ended in an error rather than finishing (e.g.
+    /// Claude Code's `StopFailure` hook). Only consumed by event sounds today,
+    /// which need a different cue for a failed turn than for a finished one.
+    public var isFailure: Bool?
 
     public init(
         sessionID: String,
         summary: String,
         timestamp: Date,
         isInterrupt: Bool? = nil,
-        isSessionEnd: Bool? = nil
+        isSessionEnd: Bool? = nil,
+        isFailure: Bool? = nil
     ) {
         self.sessionID = sessionID
         self.summary = summary
         self.timestamp = timestamp
         self.isInterrupt = isInterrupt
         self.isSessionEnd = isSessionEnd
+        self.isFailure = isFailure
     }
 }
 
