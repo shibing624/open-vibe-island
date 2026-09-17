@@ -39,6 +39,7 @@ private struct SetupCommand {
     let action: Action
     let codexDirectory: URL
     let claudeDirectory: URL
+    let claudeSource: String
     let kimiDirectory: URL
     let grokDirectory: URL
     let agenticaDirectory: URL
@@ -55,6 +56,7 @@ private struct SetupCommand {
         var hooksBinary: URL?
         var codexDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex", isDirectory: true)
         var claudeDirectory = ClaudeConfigDirectory.resolved()
+        var claudeSource = "claude"
         var kimiDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".kimi", isDirectory: true)
         var grokDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".grok", isDirectory: true)
         var agenticaDirectory = AgenticaHookInstallationManager.defaultDirectory()
@@ -104,6 +106,13 @@ private struct SetupCommand {
                 }
                 agenticaDirectory = URL(fileURLWithPath: arguments[index]).standardizedFileURL
 
+            case "--source":
+                index += 1
+                guard index < arguments.count else {
+                    throw SetupError.missingValue("--source")
+                }
+                claudeSource = arguments[index]
+
             default:
                 throw SetupError.unexpectedArgument(arguments[index])
             }
@@ -121,6 +130,7 @@ private struct SetupCommand {
 
         self.codexDirectory = codexDirectory
         self.claudeDirectory = claudeDirectory
+        self.claudeSource = claudeSource
         self.kimiDirectory = kimiDirectory
         self.grokDirectory = grokDirectory
         self.agenticaDirectory = agenticaDirectory
@@ -214,11 +224,12 @@ private struct SetupCommand {
             throw SetupError.usage
         }
 
-        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory)
+        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory, hookSource: claudeSource)
         let status = try manager.install(hooksBinaryURL: hooksBinary)
 
         print("Installed Open Island Claude hooks.")
         print("Claude dir: \(status.claudeDirectory.path)")
+        print("Source: \(claudeSource)")
         print("Hooks binary: \(hooksBinary.path)")
         if status.hasClaudeIslandHooks {
             print("Note: claude-island hooks are still present alongside Open Island hooks.")
@@ -226,21 +237,24 @@ private struct SetupCommand {
     }
 
     private func uninstallClaude() throws {
-        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory)
+        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory, hookSource: claudeSource)
         let status = try manager.uninstall()
 
         print("Removed Open Island Claude hooks.")
         print("Claude dir: \(status.claudeDirectory.path)")
+        print("Source: \(claudeSource)")
         if status.hasClaudeIslandHooks {
             print("Preserved claude-island hooks.")
         }
     }
 
     private func statusClaude() throws {
-        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory)
+        let manager = ClaudeHookInstallationManager(claudeDirectory: claudeDirectory, hookSource: claudeSource)
+
         let status = try manager.status(hooksBinaryURL: hooksBinary)
 
         print("Claude dir: \(status.claudeDirectory.path)")
+        print("Source: \(claudeSource)")
         print("Managed hooks present: \(status.managedHooksPresent ? "yes" : "no")")
         print("claude-island hooks present: \(status.hasClaudeIslandHooks ? "yes" : "no")")
         if let hooksBinary {
@@ -403,9 +417,9 @@ private enum SetupError: Error, LocalizedError {
               swift run OpenIslandSetup install [--hooks-binary /abs/path/to/OpenIslandHooks] [--codex-dir /abs/path/to/.codex]
               swift run OpenIslandSetup uninstall [--codex-dir /abs/path/to/.codex]
               swift run OpenIslandSetup status [--hooks-binary /abs/path/to/OpenIslandHooks] [--codex-dir /abs/path/to/.codex]
-              swift run OpenIslandSetup installClaude [--hooks-binary /abs/path/to/OpenIslandHooks] [--claude-dir /abs/path/to/.claude]
-              swift run OpenIslandSetup uninstallClaude [--claude-dir /abs/path/to/.claude]
-              swift run OpenIslandSetup statusClaude [--hooks-binary /abs/path/to/OpenIslandHooks] [--claude-dir /abs/path/to/.claude]
+              swift run OpenIslandSetup installClaude [--hooks-binary /abs/path/to/OpenIslandHooks] [--claude-dir /abs/path/to/.claude] [--source claude|codebuddy|qoder|qwen|factory|kimi]
+              swift run OpenIslandSetup uninstallClaude [--claude-dir /abs/path/to/.claude] [--source <agent>]
+              swift run OpenIslandSetup statusClaude [--hooks-binary /abs/path/to/OpenIslandHooks] [--claude-dir /abs/path/to/.claude] [--source <agent>]
               swift run OpenIslandSetup installKimi [--hooks-binary /abs/path/to/OpenIslandHooks] [--kimi-dir /abs/path/to/.kimi]
               swift run OpenIslandSetup uninstallKimi [--kimi-dir /abs/path/to/.kimi]
               swift run OpenIslandSetup statusKimi [--hooks-binary /abs/path/to/OpenIslandHooks] [--kimi-dir /abs/path/to/.kimi]
