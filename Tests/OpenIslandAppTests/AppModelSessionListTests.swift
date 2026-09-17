@@ -1018,6 +1018,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .claudeCode,
                     sessionID: nil,
+                    processID: nil,
                     workingDirectory: "/tmp/open-island",
                     terminalTTY: "/dev/ttys002",
                     terminalApp: "Ghostty"
@@ -1089,6 +1090,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .claudeCode,
                     sessionID: nil,
+                    processID: nil,
                     workingDirectory: "/tmp/open-island",
                     terminalTTY: "/dev/ttys002",
                     terminalApp: "Ghostty"
@@ -1131,6 +1133,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .claudeCode,
                     sessionID: existing.id,
+                    processID: nil,
                     workingDirectory: "/tmp/open-island-readme",
                     terminalTTY: "/dev/ttys008",
                     terminalApp: "Ghostty"
@@ -1153,6 +1156,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .cursor,
                     sessionID: "6f7b9f8a-2bd0-48b4-a497-9801dd191d03",
+                    processID: nil,
                     workingDirectory: "/tmp/simple-agent-lab",
                     terminalTTY: "/dev/ttys003",
                     terminalApp: "Ghostty"
@@ -1200,6 +1204,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .cursor,
                     sessionID: "6f7b9f8a-2bd0-48b4-a497-9801dd191d03",
+                    processID: nil,
                     workingDirectory: "/tmp/simple-agent-lab",
                     terminalTTY: "/dev/ttys003",
                     terminalApp: "Ghostty"
@@ -1222,6 +1227,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .cursor,
                     sessionID: "6f7b9f8a-2bd0-48b4-a497-9801dd191d03",
+                    processID: nil,
                     workingDirectory: "/tmp/simple-agent-lab",
                     terminalTTY: "/dev/ttys003",
                     terminalApp: "Ghostty"
@@ -1229,6 +1235,7 @@ struct AppModelSessionListTests {
                 .init(
                     tool: .cursor,
                     sessionID: "6f7b9f8a-2bd0-48b4-a497-9801dd191d03",
+                    processID: nil,
                     workingDirectory: "/tmp/simple-agent-lab",
                     terminalTTY: "/dev/ttys004",
                     terminalApp: "Ghostty"
@@ -1450,6 +1457,7 @@ struct AppModelSessionListTests {
             .init(
                 tool: .claudeCode,
                 sessionID: nil,
+                processID: nil,
                 workingDirectory: "/tmp/open-island",
                 terminalTTY: "/dev/ttys002",
                 terminalApp: "Ghostty"

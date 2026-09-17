@@ -233,7 +233,7 @@ struct TerminalSessionAttachmentProbeTests {
             ghosttyAvailability: .unavailable(appIsRunning: true),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "session-1", workingDirectory: "/tmp/worktree", terminalTTY: "/dev/ttys000"),
+                .init(tool: .codex, sessionID: "session-1", processID: nil, workingDirectory: "/tmp/worktree", terminalTTY: "/dev/ttys000"),
             ],
             now: now
         )
@@ -267,7 +267,7 @@ struct TerminalSessionAttachmentProbeTests {
             ghosttyAvailability: .unavailable(appIsRunning: true),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .claudeCode, sessionID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
+                .init(tool: .claudeCode, sessionID: nil, processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
             ],
             now: now
         )
@@ -317,7 +317,7 @@ struct TerminalSessionAttachmentProbeTests {
             ghosttyAvailability: .unavailable(appIsRunning: true),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .claudeCode, sessionID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
+                .init(tool: .claudeCode, sessionID: nil, processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
             ],
             now: now
         )
@@ -371,6 +371,7 @@ struct TerminalSessionAttachmentProbeTests {
                 .init(
                     tool: .claudeCode,
                     sessionID: "9df061a9-6836-4ccb-b83b-aea3196eca43",
+                    processID: nil,
                     workingDirectory: "/tmp/open-island",
                     terminalTTY: "/dev/ttys002"
                 ),
@@ -487,7 +488,7 @@ struct TerminalSessionAttachmentProbeTests {
             ghosttyAvailability: .unavailable(appIsRunning: true),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .claudeCode, sessionID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
+                .init(tool: .claudeCode, sessionID: nil, processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
             ],
             now: now
         )
@@ -567,8 +568,8 @@ struct TerminalSessionAttachmentProbeTests {
             ),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "primary", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
-                .init(tool: .codex, sessionID: "active-rehomed", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
+                .init(tool: .codex, sessionID: "primary", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
+                .init(tool: .codex, sessionID: "active-rehomed", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
             ],
             now: now
         )
@@ -615,8 +616,8 @@ struct TerminalSessionAttachmentProbeTests {
             ),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "primary", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
-                .init(tool: .codex, sessionID: "active-rehomed", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
+                .init(tool: .codex, sessionID: "primary", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
+                .init(tool: .codex, sessionID: "active-rehomed", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
             ],
             now: now
         )
@@ -670,8 +671,8 @@ struct TerminalSessionAttachmentProbeTests {
             ),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "codex-session", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
-                .init(tool: .claudeCode, sessionID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
+                .init(tool: .codex, sessionID: "codex-session", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys000"),
+                .init(tool: .claudeCode, sessionID: nil, processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
             ],
             now: now
         )
@@ -726,8 +727,8 @@ struct TerminalSessionAttachmentProbeTests {
             ),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "misbound-codex", workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
-                .init(tool: .claudeCode, sessionID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
+                .init(tool: .codex, sessionID: "misbound-codex", processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys001"),
+                .init(tool: .claudeCode, sessionID: nil, processID: nil, workingDirectory: "/tmp/open-island", terminalTTY: "/dev/ttys002"),
             ],
             now: now
         )
@@ -761,7 +762,7 @@ struct TerminalSessionAttachmentProbeTests {
             ),
             terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
             activeProcesses: [
-                .init(tool: .codex, sessionID: "active-no-jump-target", workingDirectory: "/tmp/VIBE-island", terminalTTY: "/dev/ttys012"),
+                .init(tool: .codex, sessionID: "active-no-jump-target", processID: nil, workingDirectory: "/tmp/VIBE-island", terminalTTY: "/dev/ttys012"),
             ],
             now: now
         )

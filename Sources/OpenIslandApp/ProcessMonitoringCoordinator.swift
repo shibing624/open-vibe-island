@@ -48,14 +48,35 @@ final class ProcessMonitoringCoordinator {
     @ObservationIgnored
     private var wasCodexAppRunning = false
 
+    /// Pids confirmed alive at the most recent full reconcile, keyed by session.
+    ///
+    /// Between full reconciles this is the only evidence of liveness, which is
+    /// what keeps the island honest when a CLI exits moments after its last hook
+    /// event: without it the row would sit for up to two full poll intervals.
+    ///
+    /// Entries are re-confirmed by every full reconcile, and one that stops being
+    /// re-confirmed is dropped — pids get reused, so a pid is only trusted as long
+    /// as the reconcile that just ran still saw it.
+    @ObservationIgnored
+    private var confirmedProcessIDs: [String: Int32] = [:]
+
+    /// When each confirmed pid was last seen by a full reconcile.
+    @ObservationIgnored
+    private var confirmedProcessIDTimestamps: [String: Date] = [:]
+
     private static let startupPollInterval: TimeInterval = 2
     private static let codexAppRunningProbeInterval: TimeInterval = 2
     private static let activePollInterval: TimeInterval = 60
     private static let idlePollInterval: TimeInterval = 300
     private static let cursorStalenessTimeout: TimeInterval = 600  // 10 minutes
+    private static let openCodeStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let codexAppStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let claudeDesktopStalenessTimeout: TimeInterval = 600  // 10 minutes
     private static let conductorStalenessTimeout: TimeInterval = 600  // 10 minutes
+    /// How long a confirmed pid may go un-reconfirmed before it stops counting as
+    /// evidence. One full poll interval plus slack, so a slow reconcile cannot
+    /// drop a live session.
+    private static let confirmedProcessIDTrustWindow: TimeInterval = activePollInterval + 30
     private static let piHeartbeatTimeout: TimeInterval = 45
     /// agentica reports runs, not sessions, so an idle row is the only evidence
     /// the CLI is gone. Matches the staleness window used for the other sources
@@ -164,6 +185,7 @@ final class ProcessMonitoringCoordinator {
                         preResolvedJumpTargets: jumpTargets,
                         observedCodexAppRunning: isCodexAppRunning
                     )
+                    self.recordConfirmedProcessIDs(from: snapshots)
                     if isCodexAppRunning {
                         self.onCodexAppMaintenanceTick?()
                     }
@@ -184,6 +206,7 @@ final class ProcessMonitoringCoordinator {
 
                 self.expireStalePiHeartbeatSessions()
                 self.expireIdleAgenticaSessions()
+                self.reconcileConfirmedProcessLiveness()
 
                 let wakeInterval = Self.monitoringWakeInterval(
                     isResolvingInitialLiveSessions: self.isResolvingInitialLiveSessions,
@@ -330,6 +353,121 @@ final class ProcessMonitoringCoordinator {
         }
         onSessionsReconciled?()
         onPersistenceNeeded?()
+    }
+
+    /// Seam for the end-to-end liveness check, which drives the same two steps the
+    /// monitor loop does but with pids of real processes it spawned itself.
+    func recordConfirmedProcessIDsForTesting(
+        _ snapshots: [ActiveAgentProcessDiscovery.ProcessSnapshot],
+        confirmedAt: Date = .now
+    ) {
+        recordConfirmedProcessIDs(from: snapshots)
+        if confirmedAt != .now {
+            confirmedProcessIDTimestamps = confirmedProcessIDTimestamps.mapValues { _ in confirmedAt }
+        }
+    }
+
+    func reconcileConfirmedProcessLivenessForTesting(now: Date = .now) {
+        reconcileConfirmedProcessLiveness(now: now)
+    }
+
+    /// Remembers which pid currently backs each tracked session.
+    ///
+    /// Only sessions whose row is still live are recorded: a detached session
+    /// whose process happens to still exist is not evidence, and recording it
+    /// would keep the row alive on the strength of a process the island has
+    /// already decided does not belong to it.
+    private func recordConfirmedProcessIDs(from snapshots: [ActiveAgentProcessDiscovery.ProcessSnapshot]) {
+        var local = state
+        let liveIDs = Set(local.sessions.filter(\.isTrackedLiveSession).map(\.id))
+
+        var matched: [String: Int32] = [:]
+        var unmatched: [AgentTool: [Int32]] = [:]
+
+        for snapshot in snapshots {
+            guard let pid = snapshot.processID else { continue }
+
+            if let id = snapshot.sessionID, liveIDs.contains(id) {
+                // An explicitly identified process is conclusive: it overrides any
+                // fallback claim on the same session.
+                matched[id] = pid
+                continue
+            }
+
+            unmatched[snapshot.tool, default: []].append(pid)
+        }
+
+        // Unidentified processes are attributed the same way the reconcile step
+        // attributes them: a tool with exactly one live session and exactly one
+        // unmatched process is a 1:1 match. Anything ambiguous stays unattributed
+        // rather than being guessed at, which means it falls back to the slow path
+        // instead of risking a wrong row being deleted.
+        for (tool, pids) in unmatched {
+            let candidates = local.sessions.filter { $0.tool == tool && $0.isTrackedLiveSession }.map(\.id)
+            guard candidates.count == 1, pids.count == 1, let id = candidates.first else { continue }
+            if matched[id] == nil {
+                matched[id] = pids[0]
+            }
+        }
+
+        let now = Date()
+        confirmedProcessIDs = matched
+        confirmedProcessIDTimestamps = matched.mapValues { _ in now }
+    }
+
+    /// Ends sessions whose remembered process is gone, checked every wake.
+    ///
+    /// This is the cheap half of the liveness story: `kill(pid, 0)` costs
+    /// essentially nothing, so it can run on the 2-second wake instead of waiting
+    /// for the next full `ps`/`lsof` reconcile. Without it a CLI that exits right
+    /// after its last hook event stays on screen for up to two full poll
+    /// intervals — a minute each — which reads as "the island never noticed".
+    ///
+    /// A pid is only trusted while a full reconcile keeps re-confirming it; once it
+    /// goes stale the session drops back to the slow path rather than being decided
+    /// on a pid the OS may have recycled.
+    private func reconcileConfirmedProcessLiveness(now: Date = .now) {
+        guard !confirmedProcessIDs.isEmpty else { return }
+
+        var local = state
+        var departed: Set<String> = []
+
+        for (sessionID, pid) in confirmedProcessIDs {
+            let lastSeen = confirmedProcessIDTimestamps[sessionID] ?? .distantPast
+            guard now.timeIntervalSince(lastSeen) <= Self.confirmedProcessIDTrustWindow else {
+                continue
+            }
+
+            guard !Self.isProcessAlive(pid: pid) else { continue }
+            departed.insert(sessionID)
+        }
+
+        guard !departed.isEmpty else { return }
+
+        for sessionID in departed {
+            confirmedProcessIDs.removeValue(forKey: sessionID)
+            confirmedProcessIDTimestamps.removeValue(forKey: sessionID)
+        }
+
+        guard !local.endSessionsWhoseProcessExited(sessionIDs: departed).isEmpty else { return }
+
+        // The ended rows are already invisible, so this is what actually takes them
+        // off the island rather than leaving them in the list as completed.
+        _ = local.removeInvisibleSessions()
+        state = local
+        onSessionsReconciled?()
+        onPersistenceNeeded?()
+    }
+
+    /// `kill(pid, 0)` performs the permission and existence checks without
+    /// delivering a signal, so it can never disturb the agent.
+    ///
+    /// Only `ESRCH` means gone. `EPERM` means the process exists but belongs to
+    /// another user, so it must still count as alive.
+    private static func isProcessAlive(pid: Int32) -> Bool {
+        guard pid > 0 else { return false }
+        if kill(pid, 0) == 0 { return true }
+        return errno != ESRCH
     }
 
     private func expireIdleAgenticaSessions(now: Date = .now) {
@@ -510,9 +648,20 @@ final class ProcessMonitoringCoordinator {
         // Fallback: If there are active OpenCode processes that we couldn't uniquely
         // match, keep all remaining unclaimed OpenCode sessions alive to prevent
         // incorrectly marking them as ended.
+        //
+        // Bounded by a staleness window, like the Cursor / Claude Desktop /
+        // Conductor fallbacks. Without one this is not a grace period but a
+        // permanent reprieve: a single unmatched OpenCode process — easy to get
+        // from an IDE integrated terminal, which exposes no TTY — would hold up
+        // every unclaimed OpenCode row forever, long after the CLI that owned them
+        // exited.
         if hasUnmatchedOpenCodeProcess {
             for session in trackedOpenCodeSessions where !claimedOpenCodeSessionIDs.contains(session.id) {
-                aliveIDs.insert(session.id)
+                let isStale = session.phase == .completed
+                    && session.updatedAt.addingTimeInterval(Self.openCodeStalenessTimeout) < Date.now
+                if !isStale {
+                    aliveIDs.insert(session.id)
+                }
             }
         }
 
@@ -553,7 +702,7 @@ final class ProcessMonitoringCoordinator {
         // Prefer TTY / CWD matches when unique; otherwise use a conservative
         // fallback (same idea as Kimi): while any Grok process is alive, keep
         // non-ended Grok sessions in the alive set so the hook-managed
-        // processNotSeenCount path does not kill them after ~6s.
+        // processNotSeenCount path does not kill them.
         // Explicit SessionEnd still wins — ended sessions are skipped here and
         // ignored by SessionState.markProcessLiveness once isSessionEnded.
         let grokProcesses = activeProcesses.filter { $0.tool == .grokBuild }
@@ -623,8 +772,8 @@ final class ProcessMonitoringCoordinator {
         // Claude Desktop sessions: Claude Code launched by Claude.app ("local
         // agent mode") runs as a TTY-less subprocess that ps/lsof discovery
         // never sees, so the hook-managed liveness fallback in
-        // SessionState.markProcessLiveness would evict these sessions ~6s after
-        // they appear (#510).  Keep them alive while Claude.app is running, but
+        // SessionState.markProcessLiveness would evict these sessions once two
+        // polls miss them (#510).  Keep them alive while Claude.app is running, but
         // let completed sessions expire after a staleness window — Claude
         // Desktop has no per-conversation "closed" signal beyond the SessionEnd
         // hook (mirrors the Cursor handling above).  The session is identified

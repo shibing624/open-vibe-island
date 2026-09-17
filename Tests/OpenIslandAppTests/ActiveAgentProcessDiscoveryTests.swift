@@ -48,6 +48,7 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(snapshots.contains(.init(
             tool: .claudeCode,
             sessionID: nil,
+            processID: 102,
             workingDirectory: "/tmp/open-island",
             terminalTTY: "/dev/ttys002",
             terminalApp: "Ghostty"
@@ -55,6 +56,9 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(snapshots.contains(.init(
             tool: .codex,
             sessionID: "019d516f-71ee-7e40-bcff-502fedac0928",
+            // The vendored binary, which is the process discovery actually
+            // resolves for Codex — the `codex` wrapper on 201 is the parent.
+            processID: 202,
             workingDirectory: "/tmp/open-island",
             terminalTTY: "/dev/ttys001",
             terminalApp: "Ghostty"
@@ -88,6 +92,7 @@ struct ActiveAgentProcessDiscoveryTests {
             .init(
                 tool: .claudeCode,
                 sessionID: "9df061a9-6836-4ccb-b83b-aea3196eca43",
+                processID: 102,
                 workingDirectory: "/tmp/open-island",
                 terminalTTY: "/dev/ttys002",
                 terminalApp: "Ghostty"
@@ -130,6 +135,7 @@ struct ActiveAgentProcessDiscoveryTests {
             .init(
                 tool: .codex,
                 sessionID: "019e0dc1-3f8b-7eb0-ae8d-04a5911e95b9",
+                processID: 202,
                 workingDirectory: "/tmp/open-island",
                 terminalTTY: "/dev/ttys001",
                 terminalApp: "Ghostty"
@@ -172,6 +178,7 @@ struct ActiveAgentProcessDiscoveryTests {
             .init(
                 tool: .cursor,
                 sessionID: "6f7b9f8a-2bd0-48b4-a497-9801dd191d03",
+                processID: 302,
                 workingDirectory: "/tmp/simple-agent-lab",
                 terminalTTY: "/dev/ttys003",
                 terminalApp: "Ghostty"
@@ -251,6 +258,7 @@ struct ActiveAgentProcessDiscoveryTests {
             .init(
                 tool: .claudeCode,
                 sessionID: nil,
+                processID: 102,
                 workingDirectory: "/tmp/open-island",
                 terminalTTY: "/dev/ttys002",
                 terminalApp: expectedTerminal
@@ -319,6 +327,7 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(snapshots.contains(.init(
             tool: .pi,
             sessionID: nil,
+            processID: 101,
             workingDirectory: "/tmp/pi-project",
             terminalTTY: "/dev/ttys001",
             terminalApp: "Ghostty"
@@ -326,6 +335,7 @@ struct ActiveAgentProcessDiscoveryTests {
         #expect(snapshots.contains(.init(
             tool: .ohMyPi,
             sessionID: nil,
+            processID: 102,
             workingDirectory: "/tmp/omp-project",
             terminalTTY: "/dev/ttys002",
             terminalApp: "Ghostty"
@@ -364,12 +374,14 @@ struct ActiveAgentProcessDiscoveryTests {
                 .init(
                     tool: .pi,
                     sessionID: nil,
+                    processID: 0,
                     workingDirectory: "/tmp/pi",
                     terminalTTY: "/dev/ttys001"
                 ),
                 .init(
                     tool: .ohMyPi,
                     sessionID: nil,
+                    processID: 0,
                     workingDirectory: "/tmp/omp",
                     terminalTTY: "/dev/ttys002"
                 ),

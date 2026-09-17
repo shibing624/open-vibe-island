@@ -12,6 +12,14 @@ struct ActiveAgentProcessDiscovery {
     struct ProcessSnapshot: Equatable, Sendable {
         var tool: AgentTool
         var sessionID: String?
+        /// The agent process this snapshot describes.
+        ///
+        /// Carried so liveness can be re-probed cheaply between full reconciles
+        /// (`kill(pid, 0)` instead of another `ps` sweep). The pid is only a hint:
+        /// it is re-confirmed on every full reconcile, and a pid that stops being
+        /// re-confirmed is discarded rather than trusted, because the OS reuses
+        /// pid numbers.
+        var processID: Int32?
         var workingDirectory: String?
         var terminalTTY: String?
         var terminalApp: String?
@@ -22,6 +30,7 @@ struct ActiveAgentProcessDiscovery {
         init(
             tool: AgentTool,
             sessionID: String?,
+            processID: Int32?,
             workingDirectory: String?,
             terminalTTY: String?,
             terminalApp: String? = nil,
@@ -31,6 +40,7 @@ struct ActiveAgentProcessDiscovery {
         ) {
             self.tool = tool
             self.sessionID = sessionID
+            self.processID = processID
             self.workingDirectory = workingDirectory
             self.terminalTTY = terminalTTY
             self.terminalApp = terminalApp
@@ -161,6 +171,7 @@ struct ActiveAgentProcessDiscovery {
                 var snapshot = ProcessSnapshot(
                     tool: .openCode,
                     sessionID: nil,
+                    processID: Int32(process.pid),
                     workingDirectory: cwd,
                     terminalTTY: process.terminalTTY,
                     terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -192,6 +203,7 @@ struct ActiveAgentProcessDiscovery {
                 snapshots.append(ProcessSnapshot(
                     tool: .geminiCLI,
                     sessionID: nil,
+                    processID: Int32(process.pid),
                     workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
                     terminalTTY: process.terminalTTY,
                     terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -209,6 +221,7 @@ struct ActiveAgentProcessDiscovery {
                 snapshots.append(ProcessSnapshot(
                     tool: .kimiCLI,
                     sessionID: nil,
+                    processID: Int32(process.pid),
                     workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
                     terminalTTY: process.terminalTTY,
                     terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -226,6 +239,7 @@ struct ActiveAgentProcessDiscovery {
                 snapshots.append(ProcessSnapshot(
                     tool: .grokBuild,
                     sessionID: nil,
+                    processID: Int32(process.pid),
                     workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
                     terminalTTY: process.terminalTTY,
                     terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -243,6 +257,7 @@ struct ActiveAgentProcessDiscovery {
                 snapshots.append(ProcessSnapshot(
                     tool: piAgent.tool,
                     sessionID: nil,
+                    processID: Int32(process.pid),
                     workingDirectory: lsofOutput.flatMap(workingDirectory(from:)),
                     terminalTTY: process.terminalTTY,
                     terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -297,6 +312,7 @@ struct ActiveAgentProcessDiscovery {
         var snapshot = ProcessSnapshot(
             tool: .codex,
             sessionID: sessionID,
+            processID: Int32(process.pid),
             workingDirectory: workingDirectory(from: lsofOutput),
             terminalTTY: process.terminalTTY,
             terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -333,6 +349,7 @@ struct ActiveAgentProcessDiscovery {
         var snapshot = ProcessSnapshot(
             tool: .cursor,
             sessionID: sessionID,
+            processID: Int32(process.pid),
             workingDirectory: workingDirectory,
             terminalTTY: process.terminalTTY,
             terminalApp: terminalApp(for: process, processesByPID: processesByPID)
@@ -398,6 +415,7 @@ struct ActiveAgentProcessDiscovery {
         var snapshot = ProcessSnapshot(
             tool: .claudeCode,
             sessionID: sessionID,
+            processID: Int32(process.pid),
             workingDirectory: workingDirectory,
             terminalTTY: process.terminalTTY,
             terminalApp: terminalApp(for: process, processesByPID: processesByPID),

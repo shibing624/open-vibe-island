@@ -390,6 +390,35 @@ public struct SessionState: Equatable, Sendable {
         upsert(session)
     }
 
+    /// Ends hook-managed sessions whose process was directly observed to be gone.
+    ///
+    /// Distinct from the `aliveSessionIDs` sweep, which only counts a miss and
+    /// waits for two consecutive ones because "not seen by the `ps`/`lsof` sweep"
+    /// can just mean the sweep failed to attribute the process. Here the caller
+    /// has already resolved the session to a specific pid and re-checked that pid
+    /// with `kill(pid, 0)`, so a miss is conclusive and there is nothing to wait
+    /// for.
+    ///
+    /// Returns the session IDs that were ended.
+    @discardableResult
+    public mutating func endSessionsWhoseProcessExited(sessionIDs: Set<String>) -> Set<String> {
+        var ended: Set<String> = []
+
+        for id in sessionIDs {
+            guard var session = sessionsByID[id], session.isHookManaged, !session.isSessionEnded else {
+                continue
+            }
+
+            session.processNotSeenCount = 0
+            session.isSessionEnded = true
+            session.phase = .completed
+            upsert(session)
+            ended.insert(id)
+        }
+
+        return ended
+    }
+
     /// Update process liveness for all tracked sessions based on process discovery.
     /// Returns the set of session IDs whose `isProcessAlive` changed.
     @discardableResult

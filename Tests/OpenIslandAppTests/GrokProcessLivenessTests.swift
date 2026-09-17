@@ -33,6 +33,7 @@ struct GrokProcessLivenessTests {
             ActiveAgentProcessDiscovery.ProcessSnapshot(
                 tool: .grokBuild,
                 sessionID: nil,
+                processID: nil,
                 workingDirectory: "/tmp/other",
                 terminalTTY: "/dev/ttys001"
             ),
@@ -71,6 +72,7 @@ struct GrokProcessLivenessTests {
             ActiveAgentProcessDiscovery.ProcessSnapshot(
                 tool: .grokBuild,
                 sessionID: nil,
+                processID: nil,
                 workingDirectory: "/tmp/work",
                 terminalTTY: "/dev/ttys042"
             ),
@@ -110,6 +112,7 @@ struct GrokProcessLivenessTests {
             ActiveAgentProcessDiscovery.ProcessSnapshot(
                 tool: .grokBuild,
                 sessionID: nil,
+                processID: nil,
                 workingDirectory: "/tmp/work",
                 terminalTTY: "/dev/ttys042"
             ),

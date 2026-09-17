@@ -422,8 +422,15 @@ public struct AgentSession: Equatable, Identifiable, Codable, Sendable {
     public var isProcessAlive: Bool = false
 
     /// Number of consecutive reconciliation polls where the process was not found.
-    /// Reset to 0 when the process is found. When >= 2 (~6 seconds), the session
+    /// Reset to 0 when the process is found. When >= 2, the session
     /// is considered gone. This prevents flicker from momentary `ps` gaps.
+    ///
+    /// Because it takes two *full* reconciles, this path is measured in minutes
+    /// (`ProcessMonitoringCoordinator.activePollInterval`), which is exactly why
+    /// it is not the primary way a finished session leaves the island: a process
+    /// that was resolved to a specific pid is re-checked every wake instead
+    /// (`endSessionsWhoseProcessExited`). This remains the fallback for sessions
+    /// whose process was never pinned down.
     public var processNotSeenCount: Int = 0
 
     /// Last liveness signal received from a session-scoped extension heartbeat.

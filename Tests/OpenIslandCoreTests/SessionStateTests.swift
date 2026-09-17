@@ -138,6 +138,76 @@ struct SessionStateTests {
         #expect(state.session(id: "desktop-1")?.isVisibleInIsland == false)
     }
 
+    /// The fast path: a session whose process was resolved to a specific pid and
+    /// observed to exit ends on the first report, with no two-poll debounce.
+    ///
+    /// This is what keeps a CLI that exits right after its last hook event from
+    /// sitting on the island for two full poll intervals.
+    @Test
+    func confirmedExitedProcessEndsTheSessionImmediately() {
+        var session = AgentSession(
+            id: "claude-1",
+            title: "Claude · demo",
+            tool: .claudeCode,
+            phase: .running,
+            summary: "Working",
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        session.isHookManaged = true
+        var state = SessionState(sessions: [session])
+
+        let ended = state.endSessionsWhoseProcessExited(sessionIDs: ["claude-1"])
+
+        #expect(ended == ["claude-1"])
+        #expect(state.session(id: "claude-1")?.isSessionEnded == true)
+        #expect(state.session(id: "claude-1")?.phase == .completed)
+        // A stale count would otherwise be carried into a resumed session.
+        #expect(state.session(id: "claude-1")?.processNotSeenCount == 0)
+    }
+
+    /// A session stopped in an attention state must still leave the island, since
+    /// `isVisibleInIsland` short-circuits to true for those.
+    @Test
+    func confirmedExitedProcessEndsASessionWaitingOnTheUser() {
+        var session = AgentSession(
+            id: "claude-2",
+            title: "Claude · demo",
+            tool: .claudeCode,
+            phase: .waitingForApproval,
+            summary: "Approve this",
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        session.isHookManaged = true
+        var state = SessionState(sessions: [session])
+        #expect(state.session(id: "claude-2")?.isVisibleInIsland == true)
+
+        state.endSessionsWhoseProcessExited(sessionIDs: ["claude-2"])
+
+        #expect(state.session(id: "claude-2")?.isVisibleInIsland == false)
+    }
+
+    /// The decisive path only applies to sessions it actually resolved, and it is
+    /// idempotent so a repeated report cannot re-trigger the completion work.
+    @Test
+    func confirmedExitIgnoresUnknownAndAlreadyEndedSessions() {
+        var ended = AgentSession(
+            id: "done-1",
+            title: "Claude · done",
+            tool: .claudeCode,
+            phase: .completed,
+            summary: "Done",
+            updatedAt: Date(timeIntervalSince1970: 1_000)
+        )
+        ended.isHookManaged = true
+        ended.isSessionEnded = true
+
+        var state = SessionState(sessions: [ended])
+
+        let first = state.endSessionsWhoseProcessExited(sessionIDs: ["done-1", "never-seen"])
+        #expect(first.isEmpty)
+        #expect(state.session(id: "done-1")?.isSessionEnded == true)
+    }
+
     /// Regression for the Conductor host support: Conductor runs Claude Code as
     /// a headless, TTY-less subprocess, so ps/lsof discovery never sees it —
     /// exactly the #510 situation. ProcessMonitoringCoordinator therefore keeps
