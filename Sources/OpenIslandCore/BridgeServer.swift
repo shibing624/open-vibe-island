@@ -1864,6 +1864,16 @@ public final class BridgeServer: @unchecked Sendable {
     }
 
     private func handleAgenticaHook(_ payload: AgenticaHookPayload, from clientID: UUID) {
+        // A delegated worker is an implementation detail of the parent session,
+        // not a session of its own: showing one row per `delegate` call (and
+        // ringing on each of its runs) would spam the island for what the user
+        // experiences as background work inside the session they are watching.
+        // The parent's own row keeps reporting as usual.
+        if payload.isDelegatedWorker == true {
+            send(.response(.acknowledged), to: clientID)
+            return
+        }
+
         let sessionID = payload.resolvedSessionID
 
         switch payload.hookEventName {

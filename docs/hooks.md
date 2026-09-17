@@ -455,6 +455,21 @@ that own the decision.
 
 ### Events
 
+#### Delegated workers are dropped
+
+agentica's `delegate` tool launches each delegated task as a whole other
+`agentica --query --print` process, and that process is a top-level CLI that
+wires its own hook egress — so without a discriminator the island would grow one
+phantom row per `delegate` call and ring on every one of its runs. agentica
+marks those processes with `AGENTICA_DELEGATE_DEPTH` (0 = user-started, 1 =
+delegated; `delegate_tool.py` sets depth + 1 and hook processes inherit the
+environment). The hook binary resolves that number into
+`is_delegated_worker`, and the bridge drops those payloads before they can
+create a session. A delegated worker is an implementation detail of the parent
+session, not a session of its own; the parent's row keeps reporting as usual.
+The in-process `task` tool never reaches the wire at all — agentica drops its
+runs at the source (`parent_run_id`).
+
 | `hook_event_name` | When it fires | Current Open Island behavior |
 |---|---|---|
 | `session.started` | The CLI booted or resumed | Creates the session row idle; carries `model`, `profile`, `permission_mode`, `transcript_path` |
