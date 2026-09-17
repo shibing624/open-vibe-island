@@ -74,6 +74,126 @@ struct ClaudeHooksTests {
         #expect(!FileManager.default.fileExists(atPath: uninstalled.manifestURL.path))
     }
 
+    // MARK: - Coexistence with commercial Vibe Island
+
+    /// The commercial bridge path is the exact string the paid app writes.
+    private static let vibeIslandCommand =
+        "/bin/sh -c '[ -x \"$HOME/.vibe-island/bin/vibe-island-bridge\" ] && \"$HOME/.vibe-island/bin/vibe-island-bridge\" --source claude; exit 0'"
+
+    private static func commands(in settings: Data) throws -> [String] {
+        let hooksObject = try jsonObject(from: settings)["hooks"] as? [String: Any] ?? [:]
+        return hooksObject.values.flatMap { value -> [String] in
+            let groups = value as? [Any] ?? []
+            return groups.flatMap { group -> [String] in
+                let hooks = (group as? [String: Any])?["hooks"] as? [Any] ?? []
+                return hooks.compactMap { ($0 as? [String: Any])?["command"] as? String }
+            }
+        }
+    }
+
+    /// Install must not treat the paid app's bridge as ours. Doing so rewrites
+    /// its entry on install and deletes it on uninstall.
+    @Test
+    func installLeavesCommercialVibeIslandHooksInPlace() throws {
+        let existing = try JSONSerialization.data(withJSONObject: [
+            "hooks": [
+                "PreToolUse": [["matcher": "*", "hooks": [["type": "command", "command": Self.vibeIslandCommand]]]],
+                "Stop": [["hooks": [["type": "command", "command": Self.vibeIslandCommand]]]],
+            ],
+        ])
+
+        let mutation = try ClaudeHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: ClaudeHookInstaller.hookCommand(for: "/managed/OpenIslandHooks"),
+            identity: .init(source: "claude")
+        )
+        let installed = try #require(mutation.contents)
+
+        let commands = try Self.commands(in: installed)
+        #expect(commands.filter { $0 == Self.vibeIslandCommand }.count == 2)
+        #expect(commands.contains { $0.contains("OpenIslandHooks") })
+    }
+
+    /// Uninstall must only remove our own entries, not the paid app's.
+    @Test
+    func uninstallLeavesCommercialVibeIslandHooksInPlace() throws {
+        let managedCommand = ClaudeHookInstaller.hookCommand(for: "/managed/OpenIslandHooks")
+        let existing = try JSONSerialization.data(withJSONObject: [
+            "hooks": [
+                "PreToolUse": [["matcher": "*", "hooks": [
+                    ["type": "command", "command": Self.vibeIslandCommand],
+                    ["type": "command", "command": managedCommand],
+                ]]],
+            ],
+        ])
+
+        let mutation = try ClaudeHookInstaller.uninstallSettingsJSON(
+            existingData: existing,
+            identity: .init(source: "claude", managedCommand: managedCommand)
+        )
+        let remaining = try #require(mutation.contents)
+
+        #expect(mutation.changed)
+        #expect(try Self.commands(in: remaining) == [Self.vibeIslandCommand])
+    }
+
+    /// A leftover Vibe Island entry alone must never read as "Open Island
+    /// installed" for any Claude-family fork.
+    @Test
+    func commercialVibeIslandHooksDoNotCountAsOpenIslandInstalled() throws {
+        let existing = try JSONSerialization.data(withJSONObject: [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": Self.vibeIslandCommand]]]]],
+        ])
+
+        for source in ["claude", "codebuddy", "qoder", "factory", "kimi"] {
+            let mutation = try ClaudeHookInstaller.uninstallSettingsJSON(
+                existingData: existing,
+                identity: .init(source: source)
+            )
+            #expect(!mutation.managedHooksPresent, "source \(source) claimed the Vibe Island command")
+        }
+    }
+
+    /// The same binary serves every fork, so a CodeBuddy install must not touch
+    /// the Claude Code entry that a different `--source` owns.
+    @Test
+    func installForOneForkLeavesTheOthersEntryAlone() throws {
+        let claudeEntry = ClaudeHookInstaller.hookCommand(for: "/managed/OpenIslandHooks", source: "claude")
+        let existing = try JSONSerialization.data(withJSONObject: [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": claudeEntry]]]]],
+        ])
+
+        let mutation = try ClaudeHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: ClaudeHookInstaller.hookCommand(for: "/managed/OpenIslandHooks", source: "codebuddy"),
+            identity: .init(source: "codebuddy")
+        )
+        let installed = try #require(mutation.contents)
+
+        let commands = try Self.commands(in: installed)
+        #expect(commands.contains(claudeEntry))
+        #expect(commands.contains { $0.contains("--source codebuddy") })
+    }
+
+    /// A binary that moved after install is still ours: the manifest command is
+    /// matched literally, so the stale entry is replaced rather than duplicated.
+    @Test
+    func reinstallReplacesTheEntryRecordedInTheManifest() throws {
+        let existing = try JSONSerialization.data(withJSONObject: [
+            "hooks": ["Stop": [["hooks": [["type": "command", "command": "'/old path/OpenIslandHooks' --source claude"]]]]],
+        ])
+
+        let mutation = try ClaudeHookInstaller.installSettingsJSON(
+            existingData: existing,
+            hookCommand: ClaudeHookInstaller.hookCommand(for: "/new path/OpenIslandHooks"),
+            identity: .init(source: "claude", managedCommand: "'/old path/OpenIslandHooks' --source claude")
+        )
+        let installed = try #require(mutation.contents)
+
+        let commands = try Self.commands(in: installed)
+        #expect(!commands.contains { $0.contains("/old path/") })
+    }
+
     @Test
     func claudeTranscriptDiscoveryRecoversRecentSessions() throws {
         let rootURL = FileManager.default.temporaryDirectory

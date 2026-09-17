@@ -2,7 +2,6 @@ import Foundation
 
 public struct ClaudeHookInstallerManifest: Equatable, Codable, Sendable {
     public static let fileName = "open-island-claude-hooks-install.json"
-    public static let legacyFileName = "vibe-island-claude-hooks-install.json"
 
     public var hookCommand: String
     public var installedAt: Date
@@ -46,6 +45,22 @@ public enum ClaudeHookInstallerError: Error, LocalizedError {
 public enum ClaudeHookInstaller {
     public static let managedTimeout = 86_400
 
+    /// Identity of a managed Open Island entry.
+    ///
+    /// `managedCommand` is the exact command this install wrote down, taken from
+    /// our own manifest. It is the primary matcher because it survives the
+    /// binary being renamed or moved out from under a stale manifest. The
+    /// `--source` fallback covers files written before a manifest existed.
+    public struct HookIdentity: Equatable, Sendable {
+        public var source: String
+        public var managedCommand: String?
+
+        public init(source: String, managedCommand: String? = nil) {
+            self.source = source
+            self.managedCommand = managedCommand
+        }
+    }
+
     private static let eventSpecs: [(name: String, matcher: String?, timeout: Int?)] = [
         ("UserPromptSubmit", nil, nil),
         ("SessionStart", nil, nil),
@@ -69,7 +84,8 @@ public enum ClaudeHookInstaller {
 
     public static func installSettingsJSON(
         existingData: Data?,
-        hookCommand: String
+        hookCommand: String,
+        identity: HookIdentity
     ) throws -> ClaudeHookFileMutation {
         var rootObject = try loadRootObject(from: existingData)
         let existingHooksObject = rootObject["hooks"] as? [String: Any] ?? [:]
@@ -77,7 +93,7 @@ public enum ClaudeHookInstaller {
 
         for (eventName, value) in existingHooksObject {
             let existingGroups = value as? [Any] ?? []
-            let cleanedGroups = sanitizeForInstall(groups: existingGroups, replacingCommand: hookCommand)
+            let cleanedGroups = sanitize(groups: existingGroups, identity: identity)
 
             if !cleanedGroups.isEmpty {
                 hooksObject[eventName] = cleanedGroups
@@ -86,7 +102,7 @@ public enum ClaudeHookInstaller {
 
         for spec in eventSpecs {
             let existingGroups = hooksObject[spec.name] as? [Any] ?? []
-            let cleanedGroups = sanitizeForInstall(groups: existingGroups, replacingCommand: hookCommand)
+            let cleanedGroups = sanitize(groups: existingGroups, identity: identity)
             hooksObject[spec.name] = cleanedGroups + [managedGroup(matcher: spec.matcher, timeout: spec.timeout, hookCommand: hookCommand)]
         }
 
@@ -103,7 +119,7 @@ public enum ClaudeHookInstaller {
 
     public static func uninstallSettingsJSON(
         existingData: Data?,
-        managedCommand: String?
+        identity: HookIdentity
     ) throws -> ClaudeHookFileMutation {
         guard let existingData else {
             return ClaudeHookFileMutation(
@@ -120,9 +136,9 @@ public enum ClaudeHookInstaller {
 
         for spec in eventSpecs {
             let existingGroups = hooksObject[spec.name] as? [Any] ?? []
-            let cleanedGroups = sanitize(groups: existingGroups, managedCommand: managedCommand)
+            let cleanedGroups = sanitize(groups: existingGroups, identity: identity)
 
-            if cleanedGroups.count != existingGroups.count || containsManagedHook(in: existingGroups, managedCommand: managedCommand) {
+            if cleanedGroups.count != existingGroups.count {
                 mutated = true
             }
 
@@ -165,7 +181,7 @@ public enum ClaudeHookInstaller {
         try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
     }
 
-    private static func sanitize(groups: [Any], managedCommand: String?) -> [[String: Any]] {
+    private static func sanitize(groups: [Any], identity: HookIdentity) -> [[String: Any]] {
         groups.compactMap { item in
             guard var group = item as? [String: Any] else {
                 return nil
@@ -177,7 +193,7 @@ public enum ClaudeHookInstaller {
                     return nil
                 }
 
-                return isManagedHook(hook, managedCommand: managedCommand) ? nil : hook
+                return isManagedHook(hook, identity: identity) ? nil : hook
             }
 
             guard !filteredHooks.isEmpty else {
@@ -186,47 +202,6 @@ public enum ClaudeHookInstaller {
 
             group["hooks"] = filteredHooks
             return group
-        }
-    }
-
-    private static func sanitizeForInstall(groups: [Any], replacingCommand: String) -> [[String: Any]] {
-        groups.compactMap { item in
-            guard var group = item as? [String: Any] else {
-                return nil
-            }
-
-            let existingHooks = group["hooks"] as? [Any] ?? []
-            let filteredHooks = existingHooks.compactMap { hook -> [String: Any]? in
-                guard let hook = hook as? [String: Any] else {
-                    return nil
-                }
-
-                return isManagedHookForInstall(hook, replacingCommand: replacingCommand) ? nil : hook
-            }
-
-            guard !filteredHooks.isEmpty else {
-                return nil
-            }
-
-            group["hooks"] = filteredHooks
-            return group
-        }
-    }
-
-    private static func containsManagedHook(in groups: [Any], managedCommand: String?) -> Bool {
-        groups.contains { item in
-            guard let group = item as? [String: Any],
-                  let hooks = group["hooks"] as? [Any] else {
-                return false
-            }
-
-            return hooks.contains { hook in
-                guard let hook = hook as? [String: Any] else {
-                    return false
-                }
-
-                return isManagedHook(hook, managedCommand: managedCommand)
-            }
         }
     }
 
@@ -275,38 +250,36 @@ public enum ClaudeHookInstaller {
         return group
     }
 
-    private static func isManagedHook(_ hook: [String: Any], managedCommand: String?) -> Bool {
+    private static func isManagedHook(_ hook: [String: Any], identity: HookIdentity) -> Bool {
         guard let command = hook["command"] as? String else {
             return false
         }
 
-        if let managedCommand, command == managedCommand {
+        if let managedCommand = identity.managedCommand, command == managedCommand {
             return true
         }
 
-        return isLegacyOpenIslandHookCommand(command)
+        return isOpenIslandHookCommand(command, source: identity.source)
     }
 
-    private static func isManagedHookForInstall(_ hook: [String: Any], replacingCommand: String) -> Bool {
-        if isManagedHook(hook, managedCommand: replacingCommand) {
-            return true
-        }
-
-        guard let command = hook["command"] as? String else {
-            return false
-        }
-
-        return isLegacyOpenIslandHookCommand(command)
-    }
-
-    private static func isLegacyOpenIslandHookCommand(_ command: String) -> Bool {
+    /// Open Island only.
+    ///
+    /// This deliberately does **not** match the commercial Vibe Island bridge
+    /// (`~/.vibe-island/bin/vibe-island-bridge`). The two products ship
+    /// independent hook installs and are expected to coexist in the same
+    /// `settings.json`; claiming the other's command here would make an Open
+    /// Island install or uninstall silently delete Vibe Island's hooks.
+    ///
+    /// `--source <agent>` is part of the match because the same binary serves
+    /// every Claude-family fork, and an install for one fork must not disturb
+    /// the entry another fork owns.
+    private static func isOpenIslandHookCommand(_ command: String, source: String) -> Bool {
         let normalized = command.lowercased()
-        if (normalized.contains("openislandhooks") || normalized.contains("vibeislandhooks")) && normalized.contains("--source claude") {
-            return true
+        guard normalized.contains("--source \(source.lowercased())") else {
+            return false
         }
 
-        return (normalized.contains("open-island-bridge") || normalized.contains("vibe-island-bridge"))
-            && normalized.contains("claude")
+        return normalized.contains("openislandhooks")
     }
 
     private static func shellQuote(_ string: String) -> String {

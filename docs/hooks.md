@@ -32,6 +32,37 @@ This is meant for per-process launches. Do not set it globally unless you want O
 
 ---
 
+## Coexistence With Commercial Vibe Island
+
+Open Island and the commercial Vibe Island app are independent products with
+independent hook installs. They are expected to be installed side by side on the
+same machine, and Open Island's installer must never read, rewrite, or delete the
+other product's entries.
+
+The two are told apart by **command ownership**, not by sharing a manifest:
+
+| Product | Hook binary |
+|---|---|
+| Open Island | `OpenIslandHooks` (bundled, copied to `~/Library/Application Support/OpenIsland/bin/`) |
+| Vibe Island | `~/.vibe-island/bin/vibe-island-bridge` |
+
+An entry is "ours" only when its command either matches the command recorded in
+our own manifest (`open-island-claude-hooks-install.json`, `open-island-grok-hooks-install.json`,
+`open-island-agentica-hooks-install.json`, …) **or** names `OpenIslandHooks` with the
+matching `--source <agent>`. The `--source` clause matters because one binary
+serves every Claude-family fork: a CodeBuddy install must not disturb the Claude
+Code entry.
+
+Installing or uninstalling therefore touches only Open Island entries. A
+Vibe Island hook left in `settings.json` is passed through verbatim, and a
+Vibe-Island-only file never reports as "Open Island installed".
+
+**Practical consequence**: with both apps installed, an agent session produces two
+hook invocations per event — one per product. Each controller only sees its own
+payload, and either one can be uninstalled without affecting the other.
+
+---
+
 ## Codex Hooks (`--source codex`)
 
 **Payload type**: `CodexHookPayload`
@@ -408,7 +439,7 @@ swift run OpenIslandSetup uninstallGrok
 
 Or use **Settings → Setup → Grok Build** in the app.
 
-> If commercial Vibe Island is also installed, both may write under `~/.grok/hooks/`. Prefer one controller at a time.
+> If commercial Vibe Island is also installed, both may write under `~/.grok/hooks/`. Open Island writes only its own `open-island.json`; Vibe Island's file is left untouched.
 
 ---
 
@@ -616,6 +647,7 @@ For iTerm, Terminal, and Ghostty the process additionally runs an AppleScript qu
 | [`Sources/OpenIslandHooks/OpenIslandHooksCLI.swift`](../Sources/OpenIslandHooks/OpenIslandHooksCLI.swift) | Hook CLI entry point — routes to Codex, Claude, Gemini, Grok, … |
 | [`Sources/OpenIslandCore/CodexHooks.swift`](../Sources/OpenIslandCore/CodexHooks.swift) | Codex payload model, output encoder, terminal detection |
 | [`Sources/OpenIslandCore/ClaudeHooks.swift`](../Sources/OpenIslandCore/ClaudeHooks.swift) | Claude Code payload model, directive types, output encoder |
+| [`Sources/OpenIslandCore/ClaudeHookInstaller.swift`](../Sources/OpenIslandCore/ClaudeHookInstaller.swift) | Owns the `settings.json` hook entries for every Claude-family fork; `HookIdentity` keeps Open Island entries distinct from the commercial Vibe Island bridge |
 | [`Sources/OpenIslandCore/GeminiHooks.swift`](../Sources/OpenIslandCore/GeminiHooks.swift) | Gemini CLI payload model, terminal detection, metadata helpers |
 | [`Sources/OpenIslandCore/GrokHooks.swift`](../Sources/OpenIslandCore/GrokHooks.swift) | Grok Build payload model, terminal detection, lifecycle summaries |
 | [`Sources/OpenIslandCore/GrokHookInstaller.swift`](../Sources/OpenIslandCore/GrokHookInstaller.swift) | Writes `~/.grok/hooks/open-island.json` |

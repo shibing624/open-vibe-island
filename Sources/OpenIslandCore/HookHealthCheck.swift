@@ -176,8 +176,7 @@ public enum HookHealthCheck {
         // 3. Check manifest
         if fileManager.fileExists(atPath: settingsPath),
            hasOpenIslandHooks(in: settingsURL, fileManager: fileManager) {
-            let legacyManifestURL = claudeDirectory.appendingPathComponent(ClaudeHookInstallerManifest.legacyFileName)
-            if !fileManager.fileExists(atPath: manifestURL.path) && !fileManager.fileExists(atPath: legacyManifestURL.path) {
+            if !fileManager.fileExists(atPath: manifestURL.path) {
                 issues.append(.manifestMissing(expectedPath: manifestURL.path))
             }
         }

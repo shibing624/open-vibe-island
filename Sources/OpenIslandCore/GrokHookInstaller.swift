@@ -184,7 +184,6 @@ public enum GrokHookInstaller {
         }
 
         return normalized.contains("openislandhooks")
-            || normalized.contains("open-island-bridge")
     }
 
     private static func managedGroup(
