@@ -1881,6 +1881,7 @@ public final class BridgeServer: @unchecked Sendable {
             clearStaleAgenticaInteractionIfNeeded(for: sessionID)
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+            synchronizeAgenticaMetadata(for: payload)
             emit(
                 .activityUpdated(
                     SessionActivityUpdated(
@@ -1897,6 +1898,10 @@ public final class BridgeServer: @unchecked Sendable {
             clearStaleAgenticaInteractionIfNeeded(for: sessionID)
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+            // Before the phase flip: the row reads `lastAssistantMessage` the
+            // moment it turns `.completed`, so landing the answer second would
+            // show the bare fallback label for one frame.
+            synchronizeAgenticaMetadata(for: payload)
             emit(
                 .sessionCompleted(
                     SessionCompleted(
@@ -1912,6 +1917,7 @@ public final class BridgeServer: @unchecked Sendable {
             clearStaleAgenticaInteractionIfNeeded(for: sessionID)
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+            synchronizeAgenticaMetadata(for: payload)
             emit(
                 .sessionCompleted(
                     SessionCompleted(
@@ -1927,6 +1933,7 @@ public final class BridgeServer: @unchecked Sendable {
         case .toolStarted:
             ensureAgenticaSessionExists(for: payload)
             synchronizeAgenticaJumpTarget(for: payload)
+            synchronizeAgenticaMetadata(for: payload)
             emit(
                 .activityUpdated(
                     SessionActivityUpdated(
@@ -1941,6 +1948,7 @@ public final class BridgeServer: @unchecked Sendable {
 
         case .toolCompleted:
             ensureAgenticaSessionExists(for: payload)
+            synchronizeAgenticaMetadata(for: payload)
             // Still `.running`: a finished tool call is progress within a turn,
             // not the end of one. Only `run.*` closes a turn.
             emit(
@@ -1973,6 +1981,9 @@ public final class BridgeServer: @unchecked Sendable {
         case .sessionEnded:
             clearStaleAgenticaInteractionIfNeeded(for: sessionID)
             ensureAgenticaSessionExists(for: payload)
+            // Carries no new text, but clears `currentTool` so an ended row
+            // cannot keep claiming a tool is live.
+            synchronizeAgenticaMetadata(for: payload)
             emit(
                 .sessionCompleted(
                     SessionCompleted(
@@ -2155,6 +2166,39 @@ public final class BridgeServer: @unchecked Sendable {
                 JumpTargetUpdated(
                     sessionID: sessionID,
                     jumpTarget: jumpTarget,
+                    timestamp: .now
+                )
+            )
+        )
+    }
+
+    /// Carries the tool name and prompt/answer text into `AgenticaSessionMetadata`.
+    ///
+    /// Without this the same facts only ever reach the row as a rendered
+    /// sentence in `summary`, which the presentation layer cannot use for
+    /// `currentToolName` — so every agentica row degraded to the bare status
+    /// word regardless of what the hook reported.
+    private func synchronizeAgenticaMetadata(for payload: AgenticaHookPayload) {
+        let sessionID = payload.resolvedSessionID
+        guard let existingSession = localState.session(id: sessionID) else {
+            return
+        }
+
+        let merged = AgenticaSessionMetadata.merged(
+            existing: existingSession.agenticaMetadata,
+            update: payload.defaultAgenticaMetadata,
+            clearsCurrentTool: payload.clearsCurrentTool
+        )
+
+        guard !merged.isEmpty, existingSession.agenticaMetadata != merged else {
+            return
+        }
+
+        emit(
+            .agenticaSessionMetadataUpdated(
+                AgenticaSessionMetadataUpdated(
+                    sessionID: sessionID,
+                    agenticaMetadata: merged,
                     timestamp: .now
                 )
             )

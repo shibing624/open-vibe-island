@@ -540,6 +540,8 @@ final class ProcessMonitoringCoordinator {
             payload.sessionID
         case let .piSessionMetadataUpdated(payload):
             payload.sessionID
+        case let .agenticaSessionMetadataUpdated(payload):
+            payload.sessionID
         case let .sessionHeartbeat(payload):
             payload.sessionID
         case let .actionableStateResolved(payload):

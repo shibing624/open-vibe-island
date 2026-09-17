@@ -85,6 +85,7 @@ public struct SoundCueRouter: Sendable {
              .openCodeSessionMetadataUpdated,
              .cursorSessionMetadataUpdated,
              .piSessionMetadataUpdated,
+             .agenticaSessionMetadataUpdated,
              .sessionHeartbeat,
              .actionableStateResolved:
             return nil

@@ -392,6 +392,47 @@ public extension AgenticaHookPayload {
             ?? "Agentica is waiting for approval to continue."
     }
 
+    /// Whether this event means "no tool is running right now".
+    ///
+    /// A finished tool call is still progress inside a turn, so the phase stays
+    /// `.running`; what ends is only the *current tool*. Every terminal event
+    /// clears it too, so a row can never be left claiming a tool is live after
+    /// the run is over.
+    var clearsCurrentTool: Bool {
+        switch hookEventName {
+        case .toolCompleted, .runCompleted, .runFailed, .runCancelled, .sessionEnded:
+            true
+        case .toolStarted, .runStarted, .sessionStarted,
+             .needsApproval, .needsInput, .needsResolved:
+            false
+        }
+    }
+
+    /// The metadata slice this event contributes, before merging.
+    ///
+    /// Each field is populated only by the events that actually carry it, so a
+    /// merge never has to decide whether an absent value means "unchanged" or
+    /// "cleared" — that is what `clearsCurrentTool` is for.
+    var defaultAgenticaMetadata: AgenticaSessionMetadata {
+        var metadata = AgenticaSessionMetadata()
+
+        switch hookEventName {
+        case .runStarted:
+            metadata.lastUserPrompt = promptPreview
+        case .runCompleted:
+            metadata.lastAssistantMessage = answerPreview
+        case .toolStarted:
+            metadata.currentTool = toolName
+            metadata.currentToolInputPreview = clipped(preview)
+        case .toolCompleted, .runFailed, .runCancelled,
+             .sessionStarted, .sessionEnded,
+             .needsApproval, .needsInput, .needsResolved:
+            break
+        }
+
+        return metadata
+    }
+
     var questionTitle: String {
         clipped(question) ?? clipped(prompt) ?? "Agentica has a question"
     }

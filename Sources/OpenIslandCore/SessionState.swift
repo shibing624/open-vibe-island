@@ -220,6 +220,15 @@ public struct SessionState: Equatable, Sendable {
             session.updatedAt = payload.timestamp
             upsert(session)
 
+        case let .agenticaSessionMetadataUpdated(payload):
+            guard var session = sessionsByID[payload.sessionID] else {
+                return
+            }
+
+            session.agenticaMetadata = payload.agenticaMetadata.isEmpty ? nil : payload.agenticaMetadata
+            session.updatedAt = payload.timestamp
+            upsert(session)
+
         case let .sessionHeartbeat(payload) where sessionsByID[payload.sessionID] == nil:
             guard let recoverySession = payload.recoverySession else {
                 return
