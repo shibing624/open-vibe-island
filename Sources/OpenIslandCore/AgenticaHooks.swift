@@ -188,6 +188,14 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
     public var terminalSessionID: String?
     public var terminalTTY: String?
     public var terminalTitle: String?
+    /// Whether this payload came from a process agentica's `delegate` tool
+    /// spawned (rather than a session the user started). Resolved by the hook
+    /// binary from `AGENTICA_DELEGATE_DEPTH` — a number agentica itself
+    /// maintains (0 = user-started, 1 = delegated), not a heuristic.
+    ///
+    /// Optional so agentica's wire (which never sends it) still decodes: this
+    /// is a local field like `terminal_*`, not part of the agentica contract.
+    public var isDelegatedWorker: Bool?
 
     private enum CodingKeys: String, CodingKey {
         case hookEventName = "hook_event_name"
@@ -213,6 +221,7 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         case terminalSessionID = "terminal_session_id"
         case terminalTTY = "terminal_tty"
         case terminalTitle = "terminal_title"
+        case isDelegatedWorker = "is_delegated_worker"
     }
 
     public init(
@@ -238,7 +247,8 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         terminalApp: String? = nil,
         terminalSessionID: String? = nil,
         terminalTTY: String? = nil,
-        terminalTitle: String? = nil
+        terminalTitle: String? = nil,
+        isDelegatedWorker: Bool? = nil
     ) {
         self.hookEventName = hookEventName
         self.sessionID = sessionID
@@ -263,6 +273,7 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         self.terminalSessionID = terminalSessionID
         self.terminalTTY = terminalTTY
         self.terminalTitle = terminalTitle
+        self.isDelegatedWorker = isDelegatedWorker
     }
 }
 
@@ -431,6 +442,8 @@ public extension AgenticaHookPayload {
     ) -> AgenticaHookPayload {
         var payload = self
 
+        payload.isDelegatedWorker = Self.isDelegatedWorker(environment: environment)
+
         if payload.terminalApp == nil {
             payload.terminalApp = HookTerminalContext.inferTerminalApp(from: environment)
         }
@@ -449,6 +462,25 @@ public extension AgenticaHookPayload {
         payload.terminalTTY = payload.terminalTTY ?? locator.tty
         payload.terminalTitle = payload.terminalTitle ?? locator.title
         return payload
+    }
+
+    /// agentica's `delegate` tool launches each delegated task as a whole other
+    /// `agentica --query --print` process and marks it with
+    /// `AGENTICA_DELEGATE_DEPTH = parent depth + 1` (`delegate_tool.py`). A
+    /// delegated worker is an implementation detail of the parent session, not
+    /// a session of its own, so its events must not grow island rows. The depth
+    /// travels in the environment hook processes inherit, so the hook binary
+    /// resolves it here once.
+    ///
+    /// Depth 0 (or absent) is a user-started session. Anything deeper is a
+    /// worker; agentica caps delegation at one level, so in practice the value
+    /// is 0 or 1.
+    private static func isDelegatedWorker(environment: [String: String]) -> Bool {
+        guard let raw = environment["AGENTICA_DELEGATE_DEPTH"],
+              let depth = Int(raw.trimmingCharacters(in: .whitespaces)) else {
+            return false
+        }
+        return depth >= 1
     }
 
     private func clipped(_ value: String?, limit: Int = 110) -> String? {
