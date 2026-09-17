@@ -109,6 +109,39 @@ enum HookTerminalContext {
         return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
     }
 
+    /// The tmux pane the agent is running in, read from the variables tmux
+    /// itself exports into every pane.
+    ///
+    /// Both values are protocol data, not guesses: `TMUX_PANE` is already in
+    /// the `%<n>` form that `select-pane -t` takes, and the first
+    /// comma-separated field of `TMUX` is the server socket path, which is
+    /// what distinguishes one tmux server from another. tmux sets `TMUX` to
+    /// `<socket>,<pid>,<session>`; only the socket is ours to use, since the
+    /// pane id already identifies the pane within that server. Outside tmux
+    /// both are simply absent, which is why this returns nil rather than a
+    /// partially-filled value.
+    ///
+    /// Without this, `JumpTarget.tmuxTarget` was nil for every hook-driven
+    /// session, so `TerminalJumpService` skipped its precise branch entirely
+    /// and fell through to activating the terminal app.
+    static func tmuxIdentity(
+        from environment: [String: String]
+    ) -> (paneID: String, socketPath: String?)? {
+        guard let paneID = environment["TMUX_PANE"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !paneID.isEmpty else {
+            return nil
+        }
+
+        let socketPath = environment["TMUX"]?
+            .split(separator: ",", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init)
+            .flatMap { $0.isEmpty ? nil : $0 }
+
+        return (paneID, socketPath)
+    }
+
     /// Session / TTY / title of the focused window of `terminalApp`, via AppleScript.
     static func locator(for terminalApp: String) -> (sessionID: String?, tty: String?, title: String?) {
         let normalized = terminalApp.lowercased()

@@ -366,6 +366,9 @@ public struct ClaudeHookPayload: Equatable, Codable, Sendable {
     public var terminalSessionID: String?
     public var terminalTTY: String?
     public var terminalTitle: String?
+    /// tmux pane id (`%3`) and server socket, resolved from the environment.
+    public var tmuxTarget: String?
+    public var tmuxSocketPath: String?
     /// Warp-specific per-pane identifier discovered via Warp's SQLite state
     /// at hook runtime. Not sent over the wire by the hook script — populated
     /// in `withRuntimeContext` and serialized through the bridge.
@@ -410,6 +413,8 @@ public struct ClaudeHookPayload: Equatable, Codable, Sendable {
         case terminalSessionID = "terminal_session_id"
         case terminalTTY = "terminal_tty"
         case terminalTitle = "terminal_title"
+        case tmuxTarget = "tmux_target"
+        case tmuxSocketPath = "tmux_socket_path"
         case warpPaneUUID = "warp_pane_uuid"
         case remote
     }
@@ -444,6 +449,8 @@ public struct ClaudeHookPayload: Equatable, Codable, Sendable {
         terminalSessionID: String? = nil,
         terminalTTY: String? = nil,
         terminalTitle: String? = nil,
+        tmuxTarget: String? = nil,
+        tmuxSocketPath: String? = nil,
         warpPaneUUID: String? = nil,
         remote: Bool? = nil
     ) {
@@ -476,6 +483,8 @@ public struct ClaudeHookPayload: Equatable, Codable, Sendable {
         self.terminalSessionID = terminalSessionID
         self.terminalTTY = terminalTTY
         self.terminalTitle = terminalTitle
+        self.tmuxTarget = tmuxTarget
+        self.tmuxSocketPath = tmuxSocketPath
         self.warpPaneUUID = warpPaneUUID
         self.remote = remote
     }
@@ -701,6 +710,8 @@ public extension ClaudeHookPayload {
             workingDirectory: cwd,
             terminalSessionID: terminalSessionID,
             terminalTTY: terminalTTY,
+            tmuxTarget: tmuxTarget,
+            tmuxSocketPath: tmuxSocketPath,
             warpPaneUUID: warpPaneUUID
         )
     }
@@ -1013,8 +1024,19 @@ public extension ClaudeHookPayload {
             payload.terminalTTY = currentTTYProvider()
         }
 
+        if payload.tmuxTarget == nil,
+           let tmux = HookTerminalContext.tmuxIdentity(from: environment) {
+            payload.tmuxTarget = tmux.paneID
+            payload.tmuxSocketPath = payload.tmuxSocketPath ?? tmux.socketPath
+        }
+
         let useLocator: Bool
-        if isCmuxTerminalApp(payload.terminalApp) || isZellijTerminalApp(payload.terminalApp) {
+        if payload.tmuxTarget != nil {
+            // The pane id is exact; the focused-window locator reports whatever
+            // is frontmost, and inside tmux that is one window hosting every
+            // pane, so it would stamp another pane's identity.
+            useLocator = false
+        } else if isCmuxTerminalApp(payload.terminalApp) || isZellijTerminalApp(payload.terminalApp) {
             // cmux/Zellij session IDs come from environment variables;
             // no AppleScript locator is available, so skip entirely.
             useLocator = false

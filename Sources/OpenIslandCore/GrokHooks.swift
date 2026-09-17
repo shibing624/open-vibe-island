@@ -91,6 +91,9 @@ public struct GrokHookPayload: Equatable, Codable, Sendable {
     public var terminalSessionID: String?
     public var terminalTTY: String?
     public var terminalTitle: String?
+    /// tmux pane id (`%3`) and server socket, resolved from the environment.
+    public var tmuxTarget: String?
+    public var tmuxSocketPath: String?
 
     private enum CodingKeys: String, CodingKey {
         case cwd
@@ -122,6 +125,8 @@ public struct GrokHookPayload: Equatable, Codable, Sendable {
         case terminalSessionID
         case terminalTTY
         case terminalTitle
+        case tmuxTarget
+        case tmuxSocketPath
     }
 
     public init(
@@ -153,7 +158,9 @@ public struct GrokHookPayload: Equatable, Codable, Sendable {
         terminalApp: String? = nil,
         terminalSessionID: String? = nil,
         terminalTTY: String? = nil,
-        terminalTitle: String? = nil
+        terminalTitle: String? = nil,
+        tmuxTarget: String? = nil,
+        tmuxSocketPath: String? = nil
     ) {
         self.cwd = cwd
         self.hookEventName = hookEventName
@@ -184,6 +191,8 @@ public struct GrokHookPayload: Equatable, Codable, Sendable {
         self.terminalSessionID = terminalSessionID
         self.terminalTTY = terminalTTY
         self.terminalTitle = terminalTitle
+        self.tmuxTarget = tmuxTarget
+        self.tmuxSocketPath = tmuxSocketPath
     }
 
     public init(from decoder: any Decoder) throws {
@@ -219,6 +228,8 @@ public struct GrokHookPayload: Equatable, Codable, Sendable {
         terminalSessionID = try container.decodeIfPresent(String.self, forKey: .terminalSessionID)
         terminalTTY = try container.decodeIfPresent(String.self, forKey: .terminalTTY)
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
+        tmuxTarget = try container.decodeIfPresent(String.self, forKey: .tmuxTarget)
+        tmuxSocketPath = try container.decodeIfPresent(String.self, forKey: .tmuxSocketPath)
     }
 }
 
@@ -238,7 +249,9 @@ public extension GrokHookPayload {
             paneTitle: terminalTitle ?? "Grok \(sessionID.prefix(8))",
             workingDirectory: cwd.isEmpty ? workspaceRoot : cwd,
             terminalSessionID: terminalSessionID,
-            terminalTTY: terminalTTY
+            terminalTTY: terminalTTY,
+            tmuxTarget: tmuxTarget,
+            tmuxSocketPath: tmuxSocketPath
         )
     }
 
@@ -409,8 +422,19 @@ public extension GrokHookPayload {
             payload.terminalTTY = currentTTYProvider()
         }
 
+        if payload.tmuxTarget == nil,
+           let tmux = HookTerminalContext.tmuxIdentity(from: environment) {
+            payload.tmuxTarget = tmux.paneID
+            payload.tmuxSocketPath = payload.tmuxSocketPath ?? tmux.socketPath
+        }
+
         let useLocator: Bool
-        if isCmuxTerminalApp(payload.terminalApp) || isZellijTerminalApp(payload.terminalApp) {
+        if payload.tmuxTarget != nil {
+            // The pane id is exact; the focused-window locator reports whatever
+            // is frontmost, and inside tmux that is one window hosting every
+            // pane, so it would stamp another pane's identity.
+            useLocator = false
+        } else if isCmuxTerminalApp(payload.terminalApp) || isZellijTerminalApp(payload.terminalApp) {
             useLocator = false
         } else if let terminalApp = payload.terminalApp, isGhosttyTerminalApp(terminalApp) {
             switch payload.hookEventName {

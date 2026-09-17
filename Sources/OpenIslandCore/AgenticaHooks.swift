@@ -188,6 +188,9 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
     public var terminalSessionID: String?
     public var terminalTTY: String?
     public var terminalTitle: String?
+    /// tmux pane id (`%3`) and server socket, resolved from the environment.
+    public var tmuxTarget: String?
+    public var tmuxSocketPath: String?
     /// Whether this payload came from a process agentica's `delegate` tool
     /// spawned (rather than a session the user started). Resolved by the hook
     /// binary from `AGENTICA_DELEGATE_DEPTH` — a number agentica itself
@@ -221,6 +224,8 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         case terminalSessionID = "terminal_session_id"
         case terminalTTY = "terminal_tty"
         case terminalTitle = "terminal_title"
+        case tmuxTarget = "tmux_target"
+        case tmuxSocketPath = "tmux_socket_path"
         case isDelegatedWorker = "is_delegated_worker"
     }
 
@@ -248,6 +253,8 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         terminalSessionID: String? = nil,
         terminalTTY: String? = nil,
         terminalTitle: String? = nil,
+        tmuxTarget: String? = nil,
+        tmuxSocketPath: String? = nil,
         isDelegatedWorker: Bool? = nil
     ) {
         self.hookEventName = hookEventName
@@ -273,6 +280,8 @@ public struct AgenticaHookPayload: Equatable, Codable, Sendable {
         self.terminalSessionID = terminalSessionID
         self.terminalTTY = terminalTTY
         self.terminalTitle = terminalTitle
+        self.tmuxTarget = tmuxTarget
+        self.tmuxSocketPath = tmuxSocketPath
         self.isDelegatedWorker = isDelegatedWorker
     }
 }
@@ -305,7 +314,9 @@ public extension AgenticaHookPayload {
             paneTitle: terminalTitle ?? "Agentica \(workspaceName)",
             workingDirectory: workingDirectory,
             terminalSessionID: terminalSessionID,
-            terminalTTY: terminalTTY ?? transport?.tty
+            terminalTTY: terminalTTY ?? transport?.tty,
+            tmuxTarget: tmuxTarget,
+            tmuxSocketPath: tmuxSocketPath
         )
     }
 
@@ -491,6 +502,21 @@ public extension AgenticaHookPayload {
 
         if payload.terminalTTY == nil {
             payload.terminalTTY = transport?.tty ?? currentTTYProvider()
+        }
+
+        if payload.tmuxTarget == nil,
+           let tmux = HookTerminalContext.tmuxIdentity(from: environment) {
+            payload.tmuxTarget = tmux.paneID
+            payload.tmuxSocketPath = payload.tmuxSocketPath ?? tmux.socketPath
+        }
+
+        // In tmux the pane id above is already exact, and the focused-window
+        // locator would actively make things worse: it reports whichever
+        // window is frontmost when the hook runs, and inside tmux the outer
+        // terminal has one window hosting every pane. Asking it would stamp a
+        // session id and title belonging to some other pane.
+        if payload.tmuxTarget != nil {
+            return payload
         }
 
         guard HookTerminalContext.supportsFocusedWindowLocator(payload.terminalApp),
