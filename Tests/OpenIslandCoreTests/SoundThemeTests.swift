@@ -6,7 +6,6 @@ import Testing
 struct SoundThemeTests {
 
     private func manifestData(
-        license: String? = "CC-BY-NC-4.0",
         author: String? = "tonyyont",
         categories: [String: [[String: String]]]
     ) -> Data {
@@ -17,9 +16,6 @@ struct SoundThemeTests {
             "source_repo": "PeonPing/og-packs",
             "categories": categories,
         ]
-        if let license {
-            manifest["license"] = license
-        }
         if let author {
             manifest["author"] = ["name": author]
         }
@@ -36,32 +32,12 @@ struct SoundThemeTests {
         let theme = try SoundTheme(manifest: data, id: "peon")
 
         #expect(theme.displayName == "Orc Peon")
-        #expect(theme.license == "CC-BY-NC-4.0")
         #expect(theme.author == "tonyyont")
         #expect(theme.sourceRepo == "PeonPing/og-packs")
         #expect(theme.entryCount == 2)
         #expect(theme.files(for: .taskComplete) == ["PeonReady1.wav"])
         #expect(theme.files(for: .taskError) == ["PeonAngry4.wav"])
         #expect(theme.entries(for: .taskError).first?.label == "Me not that kind of orc!")
-    }
-
-    /// Attribution is the only record of what may be redistributed, so a pack
-    /// without it must not become selectable.
-    @Test
-    func rejectsManifestWithoutAttribution() {
-        let noLicense = manifestData(license: nil, categories: [
-            "task.complete": [["file": "a.wav", "label": ""]],
-        ])
-        let noAuthor = manifestData(author: nil, categories: [
-            "task.complete": [["file": "a.wav", "label": ""]],
-        ])
-
-        #expect(throws: SoundThemeError.missingAttribution(id: "peon")) {
-            try SoundTheme(manifest: noLicense, id: "peon")
-        }
-        #expect(throws: SoundThemeError.missingAttribution(id: "peon")) {
-            try SoundTheme(manifest: noAuthor, id: "peon")
-        }
     }
 
     @Test
@@ -140,5 +116,19 @@ struct SoundThemeTests {
             .appendingPathComponent("absent-\(UUID().uuidString)")
 
         #expect(SoundTheme.installedThemes(in: missing).isEmpty)
+    }
+
+    /// The bundled peon pack ships no `license` field (bought out for this
+    /// repository); it must load like any other manifest.
+    @Test
+    func parsesManifestWithoutLicenseField() throws {
+        let data = manifestData(categories: [
+            "task.complete": [["file": "PeonReady1.wav", "label": "Ready to work?"]],
+        ])
+
+        let theme = try SoundTheme(manifest: data, id: "peon")
+
+        #expect(theme.license == "")
+        #expect(theme.files(for: .taskComplete) == ["PeonReady1.wav"])
     }
 }

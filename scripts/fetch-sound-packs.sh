@@ -6,15 +6,17 @@
 #   ./scripts/fetch-sound-packs.sh --force      # re-download and re-install
 #   ./scripts/fetch-sound-packs.sh --list       # show the pack table and exit
 #
-# ## Why a downloader instead of committed audio
+# ## Why a downloader for most packs
 #
-# The upstream packs (PeonPing registry) are game audio, and their manifests
-# declare CC-BY-NC-4.0 — non-commercial, which is incompatible with this
-# repository's GPL-3.0 license. The repository root LICENSE of PeonPing/og-packs
-# says MIT, but the per-pack declaration wins: PeonPing cannot relicense Blizzard
-# or EA audio.
+# The Orc Peon pack is bought out and ships inside the app bundle
+# (Sources/OpenIslandApp/SoundPacks/peon) — it is not downloadable, it is already
+# there. Everything else in the table below is upstream game audio (PeonPing
+# registry) whose manifests declare CC-BY-NC-4.0 — non-commercial, which is
+# incompatible with this repository's GPL-3.0 license. The repository root
+# LICENSE of PeonPing/og-packs says MIT, but the per-pack declaration wins:
+# PeonPing cannot relicense Blizzard or EA audio.
 #
-# So the audio is never committed here. Packs are installed into
+# So those packs are never committed here. They are installed into
 #
 #     ~/Library/Application Support/OpenIsland/SoundPacks/<pack>/
 #
@@ -56,7 +58,7 @@ CATEGORIES=(session.start task.acknowledge task.complete task.error input.requir
 # `peon` is the default picked by the app when no choice has been made yet.
 PACKS=(
   # Game audio — CC-BY-NC-4.0, non-commercial, do not redistribute.
-  "peon|PeonPing/og-packs|v1.1.0|peon"                              # Warcraft Orc Peon
+  # (peon is not here: it is bought out and bundled with the app.)
   "red-alert-soviet|PeonPing/og-packs|v1.1.0|ra_soviet"             # Red Alert Soviet
   "glados|PeonPing/og-packs|v1.1.0|glados"                          # Portal GLaDOS
   "sc-scv|PeonPing/og-packs|v1.1.0|sc_scv"                          # StarCraft SCV

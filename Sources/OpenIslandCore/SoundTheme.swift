@@ -54,10 +54,6 @@ public enum SoundCue: String, CaseIterable, Sendable, Equatable {
 }
 
 public enum SoundThemeError: Error, Equatable {
-    /// A pack whose manifest omits `license` or `author` is unusable: those two
-    /// fields are the only record of what may be redistributed, so a pack
-    /// without them cannot be shown as attributed audio.
-    case missingAttribution(id: String)
     /// A manifest with no playable entry at all.
     case emptyCategories(id: String)
 }
@@ -65,15 +61,14 @@ public enum SoundThemeError: Error, Equatable {
 /// A sound pack: a directory of audio files plus a `theme.json` manifest that
 /// says which file belongs to which event category.
 ///
-/// ## Where the audio lives, and why it is not in this repository
+/// ## Where the audio lives
 ///
-/// Packs are installed under `~/Library/Application Support/OpenIsland/SoundPacks/`
-/// by `scripts/fetch-sound-packs.sh`, never committed here. The upstream packs
-/// (PeonPing registry) carry game audio and most declare `CC-BY-NC-4.0`, which
-/// is incompatible with this repository's GPL-3.0 license. Shipping the
-/// downloader instead of the audio is also what the commercial Vibe Island app
-/// does — it fetches packs from `https://PeonPing.github.io/registry/index.json`
-/// at runtime rather than bundling them.
+/// The Orc Peon pack is bought out and bundled with the app (see
+/// `EventSoundService.bundledThemes`), so a fresh install has per-event
+/// sounds without downloading anything. Further packs are installed under
+/// `~/Library/Application Support/OpenIsland/SoundPacks/` by
+/// `scripts/fetch-sound-packs.sh`; the fetch script's table says which packs
+/// are safe to download for personal use.
 ///
 /// A pack that is missing on disk therefore has to be *explained*, not merely
 /// tolerated: the failure mode is "nothing plays", which reads as a broken
@@ -111,13 +106,19 @@ public struct SoundTheme: Sendable, Equatable, Identifiable {
     public let id: String
     public let displayName: String
     public let version: String
-    /// The license the pack declares. Passed through verbatim and never
-    /// interpreted in code — deciding whether a license permits something is a
-    /// human judgement; the app's job is to show the attribution.
+    /// The license the pack declares, if any. Passed through verbatim and
+    /// never interpreted in code — deciding whether a license permits
+    /// something is a human judgement; the app's job is to show the
+    /// attribution. Empty when the pack declares none (the bundled pack).
     public let license: String
     public let author: String
     /// Upstream repository, shown for attribution.
     public let sourceRepo: String
+    /// Directory the audio files live in. Bundled packs point inside the app's
+    /// resource bundle; fetched packs point under Application Support. Audio
+    /// resolution is the caller's job, so this is the only field that says
+    /// where to actually read a file from.
+    public let audioDirectory: URL?
     /// Upstream category key (`session.start`) to the entries available for it.
     public let categories: [String: [Entry]]
 
@@ -128,6 +129,7 @@ public struct SoundTheme: Sendable, Equatable, Identifiable {
         license: String,
         author: String,
         sourceRepo: String,
+        audioDirectory: URL? = nil,
         categories: [String: [Entry]]
     ) {
         self.id = id
@@ -136,6 +138,7 @@ public struct SoundTheme: Sendable, Equatable, Identifiable {
         self.license = license
         self.author = author
         self.sourceRepo = sourceRepo
+        self.audioDirectory = audioDirectory
         self.categories = categories
     }
 
@@ -191,13 +194,8 @@ public struct SoundTheme: Sendable, Equatable, Identifiable {
         let categories: [String: [Entry]]
     }
 
-    public init(manifest data: Data, id: String) throws {
+    public init(manifest data: Data, id: String, audioDirectory: URL? = nil) throws {
         let manifest = try JSONDecoder().decode(Manifest.self, from: data)
-
-        guard let license = manifest.license, !license.isEmpty,
-              let author = manifest.author?.name, !author.isEmpty else {
-            throw SoundThemeError.missingAttribution(id: id)
-        }
 
         let categories = manifest.categories
             .mapValues { entries in
@@ -212,9 +210,10 @@ public struct SoundTheme: Sendable, Equatable, Identifiable {
         self.id = id
         self.displayName = manifest.display_name ?? manifest.name ?? id
         self.version = manifest.version ?? ""
-        self.license = license
-        self.author = author
+        self.license = manifest.license ?? ""
+        self.author = manifest.author?.name ?? ""
         self.sourceRepo = manifest.source_repo ?? ""
+        self.audioDirectory = audioDirectory
         self.categories = categories
     }
 

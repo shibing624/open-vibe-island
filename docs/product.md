@@ -53,7 +53,7 @@ CLI coding agents are powerful, but they pull attention away from the editor and
 - **Notch overlay** — sits in the notch area on notch Macs, falls back to a compact top-center bar on external displays or non-notch Macs
 - **Settings** — hook install/uninstall, usage dashboard, General, Display, Sound, Shortcuts, Lab, About
 - **Notification mode** — auto-height panel for permission requests and session events
-- **Notification sounds** — per-event sounds with mute toggle and volume; CESP sound packs installed by `scripts/fetch-sound-packs.sh`, falling back to macOS system sounds when no pack is installed (see [docs/sound-themes.md](./sound-themes.md))
+- **Notification sounds** — per-event sounds with mute toggle and volume; the Orc Peon pack is bundled with the app, more CESP packs can be installed by `scripts/fetch-sound-packs.sh`, and the System theme falls back to macOS system sounds (see [docs/sound-themes.md](./sound-themes.md))
 - **i18n** — English and Simplified Chinese
 - **Session discovery** — auto-discover from local transcripts, persist across launches
 - **Process discovery** — match active agents via `ps`/`lsof`

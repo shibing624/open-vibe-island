@@ -32,7 +32,7 @@ The smoke path is intentionally aimed at the repository executable, not `~/Appli
 
 `scripts/clean-and-run.sh` composes `scripts/clean-user-env.sh` and `scripts/launch-dev-app.sh`, then adds the check neither of them makes: that the app survived launch. `open` returns success as soon as LaunchServices accepts the bundle, so a rejected signature, a missing `Info.plist` key, or a crash during startup are all indistinguishable from a healthy launch. When the process is not alive, the script prints the most recent crash report and re-runs the bundle binary in the foreground.
 
-It also reports installed sound packs, because cleaning removes `~/Library/Application Support/OpenIsland` — including `SoundPacks/`. A cleaned environment falls back to a single macOS system sound until `scripts/fetch-sound-packs.sh` runs again.
+It also reports installed sound packs, because cleaning removes `~/Library/Application Support/OpenIsland` — including `SoundPacks/`. The bundled Orc Peon theme survives cleaning (it ships in the app bundle), so events keep their per-event sounds either way.
 
 - `--dry-run` shows what cleaning would remove and builds nothing
 - `--no-clean` rebuilds and launches without touching the environment

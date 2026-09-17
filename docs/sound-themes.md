@@ -5,16 +5,19 @@ all of them at once by picking a *theme*. Themes are CESP (Community Event Sound
 Pack) v1.0 packs — the same format the commercial Vibe Island app consumes from
 the [PeonPing registry](https://PeonPing.github.io/registry/index.json).
 
-## Audio is downloaded, never committed
+## Bundled and downloaded audio
 
-No audio file lives in this repository, and none ever should.
+The Orc Peon pack (`peon`) is bought out for this project and committed under
+`Sources/OpenIslandApp/SoundPacks/peon/`, shipped inside the app bundle via
+SPM's `.copy("SoundPacks")` resource rule. A fresh install therefore already
+has per-event sounds — no download step.
 
-The upstream packs are game audio. Their manifests declare `CC-BY-NC-4.0`
-(non-commercial), which is incompatible with this project's GPL-3.0 license.
-`PeonPing/og-packs` has an MIT `LICENSE` at its repository root, but the per-pack
-declaration wins: PeonPing cannot relicense Blizzard, Nintendo, or EA audio.
+Every other pack in the fetch script's table is upstream game audio from the
+PeonPing registry, whose manifests declare `CC-BY-NC-4.0` (non-commercial).
+Those stay downloaded, never committed: they are personal-use only and cannot
+be redistributed with this project.
 
-Packs are therefore installed outside the repository:
+Downloaded packs are installed outside the repository:
 
 ```
 ~/Library/Application Support/OpenIsland/SoundPacks/<pack>/
@@ -34,21 +37,19 @@ repository rather than per pack).
 
 The pack table in the script marks which packs are non-commercial game audio and
 which are MIT / CC0 synthesized UI sounds. Only the latter could ever ship with a
-build; the app bundles neither.
+build beyond the bought-out `peon`.
 
 ## Without a pack: the System theme
 
-A fresh checkout has no packs, so the reserved theme id `system` plays one macOS
-alert sound for every event — exactly what Open Island did before themes existed.
-Settings then shows the system sound list and names the script to run.
-
-This matters because the failure mode of missing audio is *silence*, which reads
-as a broken player rather than as missing files.
+The reserved theme id `system` plays one macOS alert sound for every event —
+exactly what Open Island did before themes existed. Settings then shows the
+system sound list.
 
 Once packs exist and the user has not chosen a theme, `peon` (Warcraft Orc Peon)
 is selected. That default is hard-coded in `EventSoundService.preferredThemeID`
 rather than derived from "first pack alphabetically", so installing a new pack
-never silently changes the default.
+never silently changes the default. A downloaded pack whose id collides with a
+bundled one is dropped in favor of the bundle.
 
 ## The five categories
 
@@ -123,9 +124,9 @@ Rules the app enforces:
 
 - **Sounds are chosen by category, never by file name.** The manifest already
   states which sound means "finished" and which means "error".
-- **A pack without `license` or `author` is rejected.** Those two fields are the
-  only record of what may be redistributed, so a pack missing them is unusable
-  rather than merely unattributed.
+- **`license` is optional.** The bundled `peon` pack declares none (bought
+  out); downloaded packs carry theirs verbatim, and Settings shows the row
+  only when the pack declares one.
 - **A missing category borrows from the rest of the same pack**, in a fixed order
   so the choice is reproducible. Falling back to a macOS alert would make the
   pack sound broken; another line from the same pack still sounds like the pack
@@ -149,7 +150,8 @@ Rules the app enforces:
 - **Rescan Sound Packs**, for running the fetch script while the app is open
 - per-event previews, not per-file: the question being answered is "do I like
   the finished sound", and each category rotates through its files anyway
-- pack attribution: sound count, author, license, source repository
+- pack attribution: sound count, author, license (when declared), source
+  repository
 
 ## Code map
 
@@ -160,6 +162,7 @@ Rules the app enforces:
 | `Sources/OpenIslandApp/EventSoundService.swift` | `AVAudioPlayer` playback, theme selection, volume, System fallback |
 | `Sources/OpenIslandApp/NotificationSoundService.swift` | macOS system alert sounds |
 | `scripts/fetch-sound-packs.sh` | downloader and manifest trimmer |
+| `Sources/OpenIslandApp/SoundPacks/peon/` | the bundled pack: audio plus manifest |
 
 Sound cue selection is pure logic and lives in Core because its failure mode is
 invisible — a cue that never fires, or one that fires on every tool call. Tests

@@ -51,6 +51,11 @@ let package = Package(
             ],
             resources: [
                 .process("Resources"),
+                // `.copy` (not `.process`): the packs must keep their
+                // `SoundPacks/<id>/` directory shape inside the bundle —
+                // `.process` flattens them to the bundle root, which would
+                // collide the moment a second pack is bundled.
+                .copy("SoundPacks"),
             ]
         ),
         .testTarget(

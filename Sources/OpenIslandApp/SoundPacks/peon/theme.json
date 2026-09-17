@@ -1,0 +1,78 @@
+{
+  "name": "peon",
+  "display_name": "Orc Peon",
+  "version": "1.0.0",
+  "author": {
+    "name": "tonyyont",
+    "github": "tonyyont"
+  },
+  "cesp_version": "1.0",
+  "categories": {
+    "session.start": [
+      {
+        "file": "PeonReady1.wav",
+        "label": "Ready to work?"
+      },
+      {
+        "file": "PeonWhat1.wav",
+        "label": "Yes?"
+      },
+      {
+        "file": "PeonWhat3.wav",
+        "label": "What you want?"
+      }
+    ],
+    "task.acknowledge": [
+      {
+        "file": "PeonYes1.wav",
+        "label": "I can do that."
+      },
+      {
+        "file": "PeonYes2.wav",
+        "label": "Be happy to."
+      },
+      {
+        "file": "PeonYes3.wav",
+        "label": "Work, work."
+      }
+    ],
+    "task.complete": [
+      {
+        "file": "PeonReady1.wav",
+        "label": "Ready to work?"
+      },
+      {
+        "file": "PeonWhat4.wav",
+        "label": "Something need doing?"
+      },
+      {
+        "file": "PeonYes1.wav",
+        "label": "I can do that."
+      }
+    ],
+    "task.error": [
+      {
+        "file": "PeonAngry4.wav",
+        "label": "Me not that kind of orc!"
+      },
+      {
+        "file": "PeonDeath.wav",
+        "label": "Ugh."
+      }
+    ],
+    "input.required": [
+      {
+        "file": "PeonWhat4.wav",
+        "label": "Something need doing?"
+      },
+      {
+        "file": "PeonWhat2.wav",
+        "label": "Hmm?"
+      },
+      {
+        "file": "PeonWhat3.wav",
+        "label": "What you want?"
+      }
+    ]
+  }
+}

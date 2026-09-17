@@ -19,10 +19,9 @@
 # see the real reason.
 #
 # It also reports which sound theme will be used: cleaning removes
-# ~/Library/Application Support/OpenIsland, and sound packs live in there, so a
-# cleaned environment falls back to macOS system sounds until the packs are
-# fetched again. The symptom of missing packs is "one plain alert sound", which
-# is easy to misread as the theme feature being broken.
+# ~/Library/Application Support/OpenIsland, and downloaded sound packs live in
+# there. The bundled Orc Peon theme survives cleaning (it ships in the app
+# bundle), so events keep their per-event sounds either way.
 #
 # This script is for manual verification. Automated checks belong in
 # scripts/harness.sh; the smoke path there deliberately targets the repository
@@ -123,10 +122,7 @@ fi
 echo "running (pid $(pgrep -x "$process_name" | tr '\n' ' '))"
 
 say "Event sound themes"
-# Iterating the glob directly rather than collecting an array: under `set -u`
-# zsh treats an empty array as unset, so both `"${arr[@]}"` and `${#arr}` abort
-# the script when no pack is installed — which is exactly the case this branch
-# exists to report.
+echo "  bundled: peon (Orc Peon, ships with the app)"
 found_pack=false
 for manifest in "$packs_dir"/*/theme.json(N); do
     found_pack=true
@@ -135,8 +131,8 @@ done
 if $found_pack; then
     echo "pick one in Settings > Sound"
 else
-    echo "no sound packs installed — every event will play one macOS system sound"
-    echo "install them with: ./scripts/fetch-sound-packs.sh peon"
+    echo "no downloaded packs — the bundled peon theme is used"
+    echo "add more with: ./scripts/fetch-sound-packs.sh"
 fi
 
 say "Ready"

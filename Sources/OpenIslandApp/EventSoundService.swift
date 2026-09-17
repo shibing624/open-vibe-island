@@ -14,11 +14,10 @@ import OpenIslandCore
 ///
 /// ## The System theme
 ///
-/// No audio ships with this repository (licensing — see `SoundTheme`), so a
-/// fresh install has no packs. Rather than being silent, the reserved theme id
-/// `system` plays a macOS alert sound for every cue, which is exactly the
-/// behavior Open Island had before packs existed. Installing a pack via
-/// `scripts/fetch-sound-packs.sh` upgrades that to per-event sounds.
+/// The Orc Peon pack ships in the app bundle (bought out for this project), so
+/// a fresh install already has per-event sounds. The reserved theme id `system`
+/// still exists: it plays a macOS alert sound for every cue, which is what
+/// Open Island did before packs existed.
 ///
 /// ## Two gates
 ///
@@ -46,14 +45,62 @@ final class EventSoundService {
         static let volume = "sound.theme.volume"
     }
 
-    /// Packs found on disk. `private(set)` so the settings pane and the player
+    /// Packs available to the user: bundled ones plus those installed under
+    /// Application Support. `private(set)` so the settings pane and the player
     /// can never disagree about what is installed.
-    private(set) var themes: [SoundTheme] = SoundTheme.installedThemes(in: SoundPackLocation.directoryURL)
+    private(set) var themes: [SoundTheme] = EventSoundService.loadThemes(
+        installedIn: SoundTheme.installedThemes(in: SoundPackLocation.directoryURL)
+    )
+
+    /// Merges bundled packs with the packs found in Application Support.
+    ///
+    /// A downloaded pack whose id collides with a bundled one is dropped: the
+    /// bundle is the copy this repository ships and keeps updated, so an old
+    /// fetch-script copy must never shadow it.
+    nonisolated static func loadThemes(installedIn installed: [SoundTheme]) -> [SoundTheme] {
+        // Packs shipped inside the app bundle. `Package.swift` declares
+        // `SoundPacks` with `.copy`, so the `SoundPacks/<id>/` directory shape
+        // survives into the resource bundle.
+        let bundled = ["peon"].compactMap { id -> SoundTheme? in
+            guard let directory = Bundle.appResources.url(
+                forResource: id,
+                withExtension: nil,
+                subdirectory: "SoundPacks"
+            ) else {
+                return nil
+            }
+            return Self.loadTheme(id: id, in: directory)
+        }
+
+        let bundledIDs = Set(bundled.map(\.id))
+        return (bundled + installed.filter { !bundledIDs.contains($0.id) })
+            .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+    }
+
+    /// Loads one pack from a directory holding `theme.json` and its audio.
+    nonisolated private static func loadTheme(id: String, in directory: URL) -> SoundTheme? {
+        do {
+            let data = try Data(contentsOf: directory.appendingPathComponent("theme.json"))
+            return try SoundTheme(manifest: data, id: id, audioDirectory: directory)
+        } catch {
+            return nil
+        }
+    }
+
+    /// Where the audio for a theme entry lives. Bundled packs read from the
+    /// resource bundle; everything else from Application Support.
+    nonisolated static func audioURL(for file: String, in theme: SoundTheme) -> URL? {
+        let directory = theme.audioDirectory ?? SoundPackLocation.directoryURL
+            .appendingPathComponent(theme.id, isDirectory: true)
+        return directory.appendingPathComponent(file)
+    }
 
     /// Rescans the packs directory — used after the fetch script runs while the
     /// app is open.
     func reloadThemes() {
-        themes = SoundTheme.installedThemes(in: SoundPackLocation.directoryURL)
+        themes = EventSoundService.loadThemes(
+            installedIn: SoundTheme.installedThemes(in: SoundPackLocation.directoryURL)
+        )
         rotation.reset()
     }
 
@@ -142,15 +189,15 @@ final class EventSoundService {
     }
 
     private func play(file: String, in theme: SoundTheme) {
-        let url = SoundPackLocation.directoryURL
-            .appendingPathComponent(theme.id, isDirectory: true)
-            .appendingPathComponent(file)
+        guard let url = EventSoundService.audioURL(for: file, in: theme) else {
+            return
+        }
 
         // A manifest entry whose file is missing has to be reported: the symptom
         // is "one sound occasionally does not play", which is unreadable
         // otherwise. Recoverable at this boundary, so it is not fatal.
         guard FileManager.default.fileExists(atPath: url.path) else {
-            NSLog("[sound] missing file \(theme.id)/\(file) — re-run scripts/fetch-sound-packs.sh")
+            NSLog("[sound] missing file \(theme.id)/\(file) at \(url.path)")
             return
         }
 

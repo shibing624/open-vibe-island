@@ -319,11 +319,7 @@ struct SoundSettingsPane: View {
             } header: {
                 Text(lang.t("settings.sound.theme"))
             } footer: {
-                // A missing pack looks exactly like a broken player, so the fix
-                // is named here instead of left to the README.
-                Text(model.soundThemes.isEmpty
-                    ? lang.t("settings.sound.theme.noPacks")
-                    : lang.t("settings.sound.theme.installHint"))
+                Text(lang.t("settings.sound.theme.installHint"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -360,7 +356,11 @@ struct SoundSettingsPane: View {
                 Section(lang.t("settings.sound.theme.info")) {
                     LabeledContent(lang.t("settings.sound.theme.entries"), value: "\(theme.entryCount)")
                     LabeledContent(lang.t("settings.sound.theme.author"), value: theme.author)
-                    LabeledContent(lang.t("settings.sound.theme.license"), value: theme.license)
+                    // The bundled pack is bought out and declares no license;
+                    // only packs that carry one show the row.
+                    if !theme.license.isEmpty {
+                        LabeledContent(lang.t("settings.sound.theme.license"), value: theme.license)
+                    }
                     if !theme.sourceRepo.isEmpty {
                         LabeledContent(lang.t("settings.sound.theme.source"), value: theme.sourceRepo)
                     }
