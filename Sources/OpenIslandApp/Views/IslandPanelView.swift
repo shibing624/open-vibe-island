@@ -2029,12 +2029,11 @@ private struct IslandSessionRow: View {
     /// Activity line for manually expanded inactive rows (bypasses time-based filter).
     private var expandedActivityLineText: String? {
         guard detailOverride == true else { return nil }
-        let trimmed = session.lastAssistantMessageText?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if let assistantMessage = trimmed, !assistantMessage.isEmpty {
-            return assistantMessage
-        }
-        return session.jumpTarget != nil ? "Ready" : "Completed"
+        // `activityLineText`, not `spotlightActivityLineText`: the latter is
+        // gated on staleness, and an explicit expand means the opposite. This
+        // used to be a second copy of the fallback chain, so any change to one
+        // site silently disagreed with the other.
+        return session.activityLineText
     }
 
     private func handlePrimaryTap() {

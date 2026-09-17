@@ -363,6 +363,94 @@ struct AgentSessionPresentationTests {
         #expect(session.displayCurrentToolName == "Search")
     }
 
+    // MARK: - Completed-row fallback chain
+    //
+    // The completed row used to be "assistant message, else Ready". `Ready`
+    // described the island (tappable), not the session, so a finished run with
+    // no assistant text reported nothing at all. These pin all three tiers.
+
+    private func completedSession(
+        summary: String,
+        assistantMessage: String? = nil,
+        hasJumpTarget: Bool = true
+    ) -> AgentSession {
+        AgentSession(
+            id: "session-1",
+            title: "Agentica · worktree",
+            tool: .agenticaCLI,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .completed,
+            summary: summary,
+            updatedAt: Date(timeIntervalSince1970: 10_000),
+            jumpTarget: hasJumpTarget
+                ? JumpTarget(
+                    terminalApp: "Ghostty",
+                    workspaceName: "worktree",
+                    paneTitle: "agentica ~/tmp/worktree",
+                    workingDirectory: "/tmp/worktree"
+                )
+                : nil,
+            agenticaMetadata: assistantMessage.map {
+                AgenticaSessionMetadata(lastAssistantMessage: $0)
+            }
+        )
+    }
+
+    @Test
+    func completedRowPrefersAssistantMessage() {
+        let session = completedSession(
+            summary: "Agentica completed the run.",
+            assistantMessage: "Parser fixed; two tests added."
+        )
+
+        // `activityLineText`, not the `spotlight` wrapper: that one is gated on
+        // staleness, which would mask the chain this test is about.
+        #expect(session.activityLineText == "Parser fixed; two tests added.")
+    }
+
+    /// Second tier: no assistant text, but the hook's own one-liner is still
+    /// more informative than a label.
+    @Test
+    func completedRowFallsBackToSummaryBeforeLabel() {
+        let session = completedSession(summary: "Finished: fix the parser")
+
+        #expect(session.activityLineText == "Finished: fix the parser")
+    }
+
+    /// Last tier only, and it no longer says "Ready".
+    @Test
+    func completedRowUsesDoneLabelOnlyWhenNothingElseExists() {
+        #expect(completedSession(summary: "  ").activityLineText == "Done")
+        #expect(
+            completedSession(summary: "", hasJumpTarget: false)
+                .activityLineText == "Completed"
+        )
+    }
+
+    @Test
+    func runningAgenticaRowReportsToolByName() {
+        let session = AgentSession(
+            id: "session-1",
+            title: "Agentica · worktree",
+            tool: .agenticaCLI,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "read_file a.py",
+            updatedAt: Date(timeIntervalSince1970: 10_000),
+            agenticaMetadata: AgenticaSessionMetadata(
+                currentTool: "read_file",
+                currentToolInputPreview: "a.py"
+            )
+        )
+
+        // The whole point of Task 1: this row is no longer just "Running".
+        // `read_file` has no special case, so it humanizes to "Read File".
+        #expect(session.activityLineText == "Read File a.py")
+        #expect(session.displayCurrentToolName == "Read File")
+    }
+
     @Test
     func hookHealthReportsCarryTheirOwnDisplayName() {
         // Regression: Settings rendered every non-Claude report as "Codex".

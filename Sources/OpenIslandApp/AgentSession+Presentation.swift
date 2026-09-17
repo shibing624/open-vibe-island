@@ -252,6 +252,17 @@ extension AgentSession {
             return nil
         }
 
+        return activityLineText
+    }
+
+    /// The activity line without the staleness gate.
+    ///
+    /// Split out so the manually-expanded row can reuse the exact same
+    /// fallback chain while deliberately bypassing `spotlightShowsDetailLines`
+    /// — that gate hides detail on old rows, which is the opposite of what an
+    /// explicit expand means. Keeping this one function is the point: the two
+    /// call sites previously each had their own copy of the chain and drifted.
+    var activityLineText: String? {
         if let request = permissionRequest?.summary.trimmedForSurface,
            !request.isEmpty {
             return request
@@ -267,6 +278,13 @@ extension AgentSession {
             if let activity = spotlightRunningActivityText {
                 return activity
             }
+            // Deliberately no `summary` tier here, unlike the completed case.
+            // A running row already shows the prompt on its own line, and the
+            // per-event summary for an in-flight turn is either that same
+            // prompt or boilerplate ("Thinking."), so preferring it duplicates
+            // the line above while reading as new information. The real fix
+            // for a running row is the tool name, which now arrives for every
+            // agent that reports one.
             return spotlightPromptLineText == nil ? "Running" : "Thinking"
         case .waitingForApproval:
             return permissionRequest?.summary.trimmedForSurface ?? "Approval needed"
@@ -278,7 +296,13 @@ extension AgentSession {
                 return assistantMessage
             }
 
-            return jumpTarget != nil ? "Ready" : "Completed"
+            if case let trimmed = summary.trimmedForSurface, !trimmed.isEmpty {
+                return trimmed
+            }
+
+            // "Ready" described the island (tappable), not the session, which
+            // is how it read as a status for the agent and said nothing.
+            return jumpTarget != nil ? "Done" : "Completed"
         }
     }
 
