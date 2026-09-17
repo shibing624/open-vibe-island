@@ -281,6 +281,9 @@ final class OverlayUICoordinator {
         notificationAutoCollapseTask?.cancel()
         notificationAutoCollapseTask = nil
         refreshOverlayPlacementIfVisible()
+        // Widening a completed card into the list must not stop the dwell timer:
+        // the list still fronts a session with nothing left to answer.
+        updateNotificationAutoCollapse()
     }
 
     // MARK: - Display configuration
@@ -324,17 +327,20 @@ final class OverlayUICoordinator {
             return true
         }
 
-        return notchOpenReason == .notification
-            && islandSurface.autoDismissesWhenPresentedAsNotification(session: activeIslandCardSession)
+        return isCurrentCardTransient
     }
 
     var autoCollapseOnMouseLeaveRequiresPriorSurfaceEntry: Bool {
+        // The wait-for-entry guard exists so a card that appears under the
+        // cursor is not dismissed before the user can read it. A click-opened
+        // session list was deliberately requested by the user, so it may close
+        // as soon as the pointer leaves instead of requiring a hover first.
         guard notchOpenReason == .notification else { return false }
         // If the session was removed from state (e.g. by process monitoring),
         // default to requiring prior surface entry — prevents the notification
         // from closing immediately on pointer exit before the user sees it.
-        guard let session = activeIslandCardSession else { return true }
-        return islandSurface.autoDismissesWhenPresentedAsNotification(session: session)
+        guard activeIslandCardSession != nil else { return true }
+        return isCurrentCardTransient
     }
 
     var showsNotificationCard: Bool {
@@ -418,6 +424,7 @@ final class OverlayUICoordinator {
                 notchClose()
             } else {
                 islandSurface = .sessionList()
+                updateNotificationAutoCollapse()
             }
             return
         }
@@ -442,13 +449,24 @@ final class OverlayUICoordinator {
         notchClose()
     }
 
+    /// Schedules the timed collapse for a transient card.
+    ///
+    /// A transient card is one whose session has nothing left to answer, i.e.
+    /// `IslandSurface.autoDismissesWhenPresentedAsNotification` is true. Waiting
+    /// sessions are never transient, so an unanswered approval card stays put.
+    ///
+    /// The timer deliberately does **not** require `notchOpenReason == .notification`.
+    /// When it did, a completed card opened by click (`.click`) or by pointer
+    /// entry (`.hover`) had no way back to closed except an explicit dismissal, so
+    /// reviewing a finished session left the island open indefinitely. The reason
+    /// records *why* the overlay opened; transience is a property of the card, and
+    /// conflating the two made the dwell timer conditional on how the user got there.
     private func updateNotificationAutoCollapse() {
         notificationAutoCollapseTask?.cancel()
         notificationAutoCollapseTask = nil
 
         guard notchStatus == .opened,
-              notchOpenReason == .notification,
-              islandSurface.autoDismissesWhenPresentedAsNotification(session: activeIslandCardSession) else {
+              isCurrentCardTransient else {
             return
         }
 
@@ -468,8 +486,7 @@ final class OverlayUICoordinator {
 
             guard let self,
                   self.notchStatus == .opened,
-                  self.notchOpenReason == .notification,
-                  self.islandSurface.autoDismissesWhenPresentedAsNotification(session: self.activeIslandCardSession) else {
+                  self.isCurrentCardTransient else {
                 return
             }
 
@@ -481,14 +498,19 @@ final class OverlayUICoordinator {
         }
     }
 
+    /// Whether the surface currently on screen has nothing left to answer, so the
+    /// island may return to closed on its own once the dwell elapses.
+    private var isCurrentCardTransient: Bool {
+        islandSurface.autoDismissesWhenPresentedAsNotification(session: activeIslandCardSession)
+    }
+
     var shouldDeferTimedNotificationAutoCollapse: Bool {
         isPointerInsideIslandSurface
             || overlayPanelController.isPointInExpandedArea(currentPointerLocation)
     }
 
     private var shouldTrackPointerInsideIslandSurface: Bool {
-        shouldAutoCollapseOnMouseLeave
-            || (notchStatus == .opened && notchOpenReason == .notification && islandSurface.isNotificationCard)
+        shouldAutoCollapseOnMouseLeave || (notchStatus == .opened && isCurrentCardTransient)
     }
 
     private var isPointerInsideCurrentNotificationCard: Bool {
