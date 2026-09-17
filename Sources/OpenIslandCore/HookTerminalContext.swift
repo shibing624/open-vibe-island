@@ -109,23 +109,32 @@ enum HookTerminalContext {
         return tty.hasPrefix("/dev/") ? tty : "/dev/\(tty)"
     }
 
-    /// The tmux pane the agent is running in, read from the variables tmux
-    /// itself exports into every pane.
-    ///
-    /// Both values are protocol data, not guesses: `TMUX_PANE` is already in
-    /// the `%<n>` form that `select-pane -t` takes, and the first
-    /// comma-separated field of `TMUX` is the server socket path, which is
-    /// what distinguishes one tmux server from another. tmux sets `TMUX` to
-    /// `<socket>,<pid>,<session>`; only the socket is ours to use, since the
-    /// pane id already identifies the pane within that server. Outside tmux
-    /// both are simply absent, which is why this returns nil rather than a
-    /// partially-filled value.
+    /// The tmux pane the agent is running in, in the `session:window.pane`
+    /// form every consumer of `JumpTarget.tmuxTarget` expects.
     ///
     /// Without this, `JumpTarget.tmuxTarget` was nil for every hook-driven
     /// session, so `TerminalJumpService` skipped its precise branch entirely
     /// and fell through to activating the terminal app.
+    ///
+    /// The environment supplies the two things only it knows: `TMUX_PANE`
+    /// identifies this pane (`%3`), and the first comma-separated field of
+    /// `TMUX` (`<socket>,<pid>,<session>`) is the server socket that tells one
+    /// tmux server from another. But `%3` is *not* the stored format:
+    /// `TerminalJumpService` splits the target on `:` and `.` to recover the
+    /// session for `switch-client` and the window for `select-window`, and
+    /// `TerminalJumpTargetResolver` compares it against
+    /// `#{session_name}:#{window_index}.#{pane_index}`. Storing `%3` would
+    /// make `switch-client -t %3` fail and would never match the resolver's
+    /// snapshot, so the field would be rewritten on every poll.
+    ///
+    /// So the canonical target is asked of tmux rather than assembled here —
+    /// tmux is the only thing that knows which session and window hold a pane,
+    /// and both can change while the agent runs. When tmux cannot answer this
+    /// returns nil: no target at all degrades to activating the app, whereas a
+    /// wrongly-shaped one corrupts the resolver's state.
     static func tmuxIdentity(
-        from environment: [String: String]
+        from environment: [String: String],
+        targetResolver: (_ paneID: String, _ socketPath: String?) -> String? = defaultTmuxTarget
     ) -> (paneID: String, socketPath: String?)? {
         guard let paneID = environment["TMUX_PANE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
@@ -139,7 +148,41 @@ enum HookTerminalContext {
             .map(String.init)
             .flatMap { $0.isEmpty ? nil : $0 }
 
-        return (paneID, socketPath)
+        guard let target = targetResolver(paneID, socketPath)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !target.isEmpty else {
+            return nil
+        }
+
+        return (target, socketPath)
+    }
+
+    /// Asks tmux for the `session:window.pane` address of one pane.
+    static func defaultTmuxTarget(paneID: String, socketPath: String?) -> String? {
+        guard let tmuxPath = resolveTmuxPath() else {
+            return nil
+        }
+
+        var arguments: [String] = []
+        if let socketPath, !socketPath.isEmpty {
+            arguments += ["-S", socketPath]
+        }
+        arguments += [
+            "display-message", "-p", "-t", paneID,
+            "-F", "#{session_name}:#{window_index}.#{pane_index}"
+        ]
+
+        return commandOutput(executablePath: tmuxPath, arguments: arguments)
+    }
+
+    private static func resolveTmuxPath() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/tmux",
+            "/usr/local/bin/tmux",
+            "/usr/bin/tmux"
+        ]
+
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     /// Session / TTY / title of the focused window of `terminalApp`, via AppleScript.

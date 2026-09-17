@@ -988,7 +988,11 @@ public extension ClaudeHookPayload {
         environment: [String: String],
         currentTTYProvider: () -> String?,
         terminalLocatorProvider: (String) -> (sessionID: String?, tty: String?, title: String?),
-        warpPaneResolver: (String) -> String? = Self.defaultWarpPaneResolver
+        warpPaneResolver: (String) -> String? = Self.defaultWarpPaneResolver,
+        // Optional rather than defaulted to the real resolver: this type is
+        // public and `HookTerminalContext` is internal, so it cannot appear in
+        // a default argument. nil means "ask tmux".
+        tmuxTargetResolver: ((_ paneID: String, _ socketPath: String?) -> String?)? = nil
     ) -> ClaudeHookPayload {
         var payload = self
 
@@ -1025,7 +1029,10 @@ public extension ClaudeHookPayload {
         }
 
         if payload.tmuxTarget == nil,
-           let tmux = HookTerminalContext.tmuxIdentity(from: environment) {
+           let tmux = HookTerminalContext.tmuxIdentity(
+               from: environment,
+               targetResolver: tmuxTargetResolver ?? HookTerminalContext.defaultTmuxTarget
+           ) {
             payload.tmuxTarget = tmux.paneID
             payload.tmuxSocketPath = payload.tmuxSocketPath ?? tmux.socketPath
         }

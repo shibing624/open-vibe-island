@@ -31,7 +31,9 @@ struct AgenticaIslandEndToEndTests {
                 "TERM_PROGRAM": "ghostty"
             ],
             currentTTYProvider: { "/dev/ttys004" },
-            terminalLocatorProvider: { _ in (nil, nil, nil) }
+            terminalLocatorProvider: { _ in (nil, nil, nil) },
+            // Stubbed so the suite never shells out to a real tmux server.
+            tmuxTargetResolver: { _, _ in "demo:2.1" }
         )
     }
 
@@ -72,8 +74,10 @@ struct AgenticaIslandEndToEndTests {
         // The jump target carries the pane throughout, which is what makes
         // TerminalJumpService take its precise branch instead of activating
         // the app.
+        // Stored in `session:window.pane` form, which is what
+        // TerminalJumpService splits and the resolver compares against.
         let target = payload(.runCompleted, answer: "done").defaultJumpTarget
-        #expect(target.tmuxTarget == "%3")
+        #expect(target.tmuxTarget == "demo:2.1")
         #expect(target.tmuxSocketPath == "/private/tmp/tmux-501/default")
     }
 
