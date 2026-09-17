@@ -840,6 +840,128 @@ struct AppModelSessionListTests {
         #expect(model.notchOpenReason == .notification)
     }
 
+    // MARK: - Transient collapse is a property of the card, not the open reason
+
+    /// A completed session opened by click must still arm the dwell timer.
+    /// Previously the timer required `.notification`, so reviewing a finished
+    /// session from the list left the island open until an explicit dismissal.
+    @Test
+    func clickOpenedCompletedCardStillSchedulesTimedCollapse() {
+        let model = AppModel()
+        model.overlay.pointerLocationProvider = { NSPoint(x: -10_000, y: -10_000) }
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "session-1",
+                    title: "Test",
+                    tool: .codex,
+                    attachmentState: .attached,
+                    phase: .completed,
+                    summary: "Done",
+                    updatedAt: .now
+                )
+            ]
+        )
+
+        model.notchOpen(reason: .click, surface: .sessionList(actionableSessionID: "session-1"))
+
+        #expect(model.hasPendingNotificationAutoCollapse)
+        #expect(model.shouldAutoCollapseOnMouseLeave)
+    }
+
+    /// Widening a completion card into the session list used to cancel the timer
+    /// and never re-arm it, stranding the overlay open.
+    @Test
+    func expandingCompletionCardToSessionListKeepsTimedCollapseArmed() {
+        let model = AppModel()
+        model.overlay.pointerLocationProvider = { NSPoint(x: -10_000, y: -10_000) }
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "session-1",
+                    title: "Test",
+                    tool: .codex,
+                    attachmentState: .attached,
+                    phase: .completed,
+                    summary: "Done",
+                    updatedAt: .now
+                )
+            ]
+        )
+
+        model.notchOpen(reason: .notification, surface: .sessionList(actionableSessionID: "session-1"))
+        model.expandNotificationToSessionList()
+
+        #expect(model.notchOpenReason == .click)
+        #expect(model.hasPendingNotificationAutoCollapse)
+    }
+
+    /// The timer is a property of the card's phase. A session awaiting a
+    /// decision never schedules one, whichever reason opened the overlay, so an
+    /// unanswered approval card cannot be timed out from under the user.
+    @Test
+    func waitingSessionNeverSchedulesTimedCollapseForAnyOpenReason() {
+        for reason in [NotchOpenReason.click, .notification, .hover, .boot] {
+            let model = AppModel()
+            model.overlay.pointerLocationProvider = { NSPoint(x: -10_000, y: -10_000) }
+            model.state = SessionState(
+                sessions: [
+                    AgentSession(
+                        id: "session-1",
+                        title: "Test",
+                        tool: .codex,
+                        attachmentState: .attached,
+                        phase: .waitingForApproval,
+                        summary: "Needs approval",
+                        updatedAt: .now,
+                        permissionRequest: PermissionRequest(
+                            title: "Run command",
+                            summary: "Needs approval",
+                            affectedPath: "~/project",
+                            toolName: "Bash"
+                        )
+                    )
+                ]
+            )
+
+            model.notchOpen(reason: reason, surface: .sessionList(actionableSessionID: "session-1"))
+
+            #expect(!model.hasPendingNotificationAutoCollapse, "reason \(reason) armed a timer for a waiting session")
+            #expect(!model.shouldAutoCollapseOnMouseLeave)
+        }
+    }
+
+    /// A click-opened completed card must return to closed once the pointer
+    /// leaves. The prior-entry guard only exists to protect cards that appear
+    /// under the cursor, not ones the user deliberately opened.
+    @Test
+    func clickOpenedCompletedCardClosesOnPointerExitWithoutPriorEntry() {
+        let model = AppModel()
+        model.state = SessionState(
+            sessions: [
+                AgentSession(
+                    id: "session-1",
+                    title: "Test",
+                    tool: .codex,
+                    attachmentState: .attached,
+                    phase: .completed,
+                    summary: "Done",
+                    updatedAt: .now
+                )
+            ]
+        )
+        model.notchStatus = .opened
+        model.notchOpenReason = .click
+        model.islandSurface = .sessionList(actionableSessionID: "session-1")
+
+        #expect(!model.autoCollapseOnMouseLeaveRequiresPriorSurfaceEntry)
+
+        model.handlePointerExitedIslandSurface()
+
+        #expect(model.notchStatus == .closed)
+        #expect(model.notchOpenReason == nil)
+    }
+
     @Test
     func mergeDiscoveredClaudeSessionsPreservesRegistryJumpTargetAndAddsTranscriptMetadata() {
         let now = Date(timeIntervalSince1970: 2_000)
