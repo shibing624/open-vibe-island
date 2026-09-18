@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -17,15 +17,15 @@ run_step() {
     case "$step" in
         docs)
             echo "==> docs"
-            zsh "$repo_root/scripts/check-docs.sh"
+            "$repo_root/scripts/check-docs.sh"
             ;;
         test)
             echo "==> test"
-            zsh "$repo_root/scripts/test-clt.sh"
+            "$repo_root/scripts/test-clt.sh"
             ;;
         lint)
             echo "==> lint"
-            zsh "$repo_root/scripts/lint-strings.sh"
+            "$repo_root/scripts/lint-strings.sh"
             ;;
         build)
             echo "==> build"
@@ -33,11 +33,11 @@ run_step() {
             ;;
         smoke)
             echo "==> smoke"
-            zsh "$repo_root/scripts/smoke-dev-app.sh"
+            "$repo_root/scripts/smoke-dev-app.sh"
             ;;
         smoke-all)
             echo "==> smoke-all"
-            zsh "$repo_root/scripts/smoke-all-scenarios.sh"
+            "$repo_root/scripts/smoke-all-scenarios.sh"
             ;;
         ci)
             run_step lint

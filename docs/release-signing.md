@@ -48,7 +48,7 @@ xcrun notarytool store-credentials "open-island-notary" \
   --password "xxxx-xxxx-xxxx-xxxx"
 
 # Then build:
-zsh scripts/package-app.sh
+./scripts/package-app.sh
 ```
 
 ## Release flow

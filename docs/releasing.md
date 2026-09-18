@@ -36,7 +36,7 @@ a signed but non-notarized build.
    git checkout main && git pull
    OPEN_ISLAND_VERSION=<version> \
    OPEN_ISLAND_EDDSA_PUBLIC_KEY="<your-public-key>" \
-   zsh scripts/package-app.sh
+   ./scripts/package-app.sh
    ```
    This produces `output/package/Open Island.dmg` and `output/package/Open Island.zip`.
 3. **Sign the update zip with EdDSA** (for Sparkle auto-update):

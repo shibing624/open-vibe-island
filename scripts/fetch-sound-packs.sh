@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Installs CESP event sound packs for Open Island.
 #
 #   ./scripts/fetch-sound-packs.sh              # install everything that is missing
@@ -238,10 +238,9 @@ for entry in "${PACKS[@]}"; do
 done
 
 echo
-# `$DEST/*/` instead of the zsh-only `(/N)` qualifier: `sh` is what people
-# actually type (and what tests/CI would use), and on macOS `sh` is bash, which
-# cannot parse `(/N)` — it fails the whole script on this line. `find` needs no
-# qualifier, matches dirs only, and prints nothing when there are none.
+# `find` rather than a glob: a glob that matches nothing either aborts the
+# script or hands `du` a literal `*`, depending on the shell. `find` matches
+# dirs only and prints nothing when there are none.
 find "$DEST" -mindepth 1 -maxdepth 1 -type d -exec du -sh {} + 2>/dev/null | sed 's/^/  /' || true
 echo
 echo "Done. Pick the theme in Open Island > Settings > Sound."

@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -16,7 +16,7 @@ for scenario in "${scenarios[@]}"; do
     echo "Running smoke scenario '$scenario'"
     OPEN_ISLAND_HARNESS_SCENARIO="$scenario" \
     OPEN_ISLAND_HARNESS_ARTIFACT_DIR="$scenario_dir" \
-    zsh "$repo_root/scripts/smoke-dev-app.sh"
+    "$repo_root/scripts/smoke-dev-app.sh"
 done
 
 echo "All smoke scenarios passed"

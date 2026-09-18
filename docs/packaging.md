@@ -4,7 +4,7 @@ This repository can now produce a local macOS app bundle from the Swift package 
 
 ## Current Shape
 
-- `zsh scripts/package-app.sh` builds `OpenIslandApp`, `OpenIslandHooks`, and `OpenIslandSetup` in release mode.
+- `./scripts/package-app.sh` builds `OpenIslandApp`, `OpenIslandHooks`, and `OpenIslandSetup` in release mode.
 - The script creates `output/package/Open Island.app`.
 - The bundle embeds helper binaries inside `Contents/Helpers/` so the app can still locate `OpenIslandHooks` after it leaves the repository checkout.
 - The script also creates `output/package/Open Island.zip` for local sharing or later notarization.
@@ -41,7 +41,7 @@ When a signing identity is available, pass it in with environment variables:
 
 ```bash
 OPEN_ISLAND_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
-zsh scripts/package-app.sh
+./scripts/package-app.sh
 ```
 
 The script signs the helper binaries and app bundle, then also signs the DMG itself (required for notarization). Entitlements are declared in `config/packaging/OpenIslandApp.entitlements`.
@@ -51,7 +51,7 @@ If a `notarytool` keychain profile is already stored, the same script notarizes 
 ```bash
 OPEN_ISLAND_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" \
 OPEN_ISLAND_NOTARY_PROFILE="open-island-notary" \
-zsh scripts/package-app.sh
+./scripts/package-app.sh
 ```
 
 That path expects `xcrun notarytool store-credentials` to have been run ahead of time.

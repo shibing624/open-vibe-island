@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -35,7 +35,9 @@ while IFS= read -r file; do
         echo "missing top-level heading: $file" >&2
         exit 1
     fi
-done < <(find docs -name '*.md' -type f | sort)
+done <<EOF
+$(find docs -name '*.md' -type f | sort)
+EOF
 
 while IFS= read -r file; do
     case "$file" in
@@ -48,7 +50,9 @@ while IFS= read -r file; do
         echo "docs index is missing link to: $file" >&2
         exit 1
     fi
-done < <(find docs -name '*.md' -type f | sort)
+done <<EOF
+$(find docs -name '*.md' -type f | sort)
+EOF
 
 if ! grep -Fq "docs/index.md" README.md; then
     echo "README.md should link to docs/index.md" >&2

@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -25,16 +25,20 @@ entitlements_path="$repo_root/config/packaging/OpenIslandApp.entitlements"
 
 cd "$repo_root"
 
+# `${arch_flags[@]+"${arch_flags[@]}"}` rather than `"${arch_flags[@]}"`: an
+# empty array expanded under `set -u` is an unbound-variable error in bash 3.2
+# (the bash macOS ships), and this array is empty unless the universal build is
+# requested — so the plain form aborted every ordinary release build.
 arch_flags=()
 if [[ "${OPEN_ISLAND_UNIVERSAL:-false}" == "true" ]]; then
     arch_flags=(--arch arm64 --arch x86_64)
 fi
 
-swift build -c release "${arch_flags[@]}" --product OpenIslandApp
-swift build -c release "${arch_flags[@]}" --product OpenIslandHooks
-swift build -c release "${arch_flags[@]}" --product OpenIslandSetup
+swift build -c release ${arch_flags[@]+"${arch_flags[@]}"} --product OpenIslandApp
+swift build -c release ${arch_flags[@]+"${arch_flags[@]}"} --product OpenIslandHooks
+swift build -c release ${arch_flags[@]+"${arch_flags[@]}"} --product OpenIslandSetup
 
-build_bin_dir="$(swift build -c release "${arch_flags[@]}" --show-bin-path)"
+build_bin_dir="$(swift build -c release ${arch_flags[@]+"${arch_flags[@]}"} --show-bin-path)"
 app_binary="$build_bin_dir/OpenIslandApp"
 hooks_binary="$build_bin_dir/OpenIslandHooks"
 setup_binary="$build_bin_dir/OpenIslandSetup"

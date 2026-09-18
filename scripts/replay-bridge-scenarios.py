@@ -366,7 +366,7 @@ def connect_bridge(socket_path: str) -> socket.socket:
     except FileNotFoundError:
         sock.close()
         raise RuntimeError(
-            f"Bridge socket not found at {socket_path}. Start the dev app with `zsh scripts/launch-dev-app.sh`."
+            f"Bridge socket not found at {socket_path}. Start the dev app with `./scripts/launch-dev-app.sh`."
         )
     except ConnectionRefusedError:
         sock.close()

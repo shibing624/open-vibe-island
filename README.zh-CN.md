@@ -339,7 +339,7 @@ open Package.swift
 构建本地 `.app` 包：
 
 ```bash
-zsh scripts/package-app.sh
+./scripts/package-app.sh
 ```
 
 该脚本会创建 `output/package/Open Island.app` 和 `output/package/Open Island.zip`。传入 `OPEN_ISLAND_SIGN_IDENTITY` 可以签名。详见 [docs/packaging.md](docs/packaging.md)。

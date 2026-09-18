@@ -1,11 +1,11 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Updates appcast.xml with a new release entry.
 #
 # Usage:
-#   zsh scripts/update-appcast.sh <version> <build_number> <ed_signature> <length> [pub_date]
+#   scripts/update-appcast.sh <version> <build_number> <ed_signature> <length> [pub_date]
 #
 # Example:
-#   zsh scripts/update-appcast.sh 1.0.3 10 "abc123==" 9014852
+#   scripts/update-appcast.sh 1.0.3 10 "abc123==" 9014852
 #
 # If pub_date is omitted, the current UTC time is used.
 

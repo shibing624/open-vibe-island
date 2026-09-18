@@ -1,10 +1,10 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # clean-and-run.sh — one command for manual end-to-end verification.
 #
-#   zsh scripts/clean-and-run.sh              # clean, rebuild the dev bundle, launch, verify
-#   zsh scripts/clean-and-run.sh --dry-run    # show what cleaning would remove, then stop
-#   zsh scripts/clean-and-run.sh --no-clean   # rebuild and launch only
-#   zsh scripts/clean-and-run.sh --skip-setup # do not reinstall agent hooks
+#   scripts/clean-and-run.sh            # clean, rebuild the dev bundle, launch, verify
+#   scripts/clean-and-run.sh --dry-run  # show what cleaning would remove, then stop
+#   scripts/clean-and-run.sh --no-clean # rebuild and launch only
+#   scripts/clean-and-run.sh --skip-setup # do not reinstall agent hooks
 #
 # This composes the two existing scripts rather than reimplementing them:
 #
@@ -26,13 +26,6 @@
 # This script is for manual verification. Automated checks belong in
 # scripts/harness.sh; the smoke path there deliberately targets the repository
 # binary rather than the installed dev bundle.
-
-# Re-exec under zsh. Running this as `sh scripts/clean-and-run.sh` ignores the
-# shebang, and the script relies on zsh glob qualifiers and modifiers, so under
-# sh it would fail on syntax rather than on anything meaningful.
-if [ -z "${ZSH_VERSION:-}" ]; then
-    exec /bin/zsh "$0" "$@"
-fi
 
 set -euo pipefail
 
@@ -70,21 +63,21 @@ say() { printf '\n\033[1m==> %s\033[0m\n' "$1"; }
 
 if $dry_run; then
     say "Cleaning (dry run)"
-    zsh "$repo_root/scripts/clean-user-env.sh" --dry-run
+    "$repo_root/scripts/clean-user-env.sh" --dry-run
     say "Dry run complete — nothing was changed, nothing was built"
     exit 0
 fi
 
 if $clean; then
     say "Cleaning user environment"
-    zsh "$repo_root/scripts/clean-user-env.sh"
+    "$repo_root/scripts/clean-user-env.sh"
 fi
 
 say "Building and launching the dev bundle"
 if $skip_setup; then
-    zsh "$repo_root/scripts/launch-dev-app.sh" --skip-setup
+    "$repo_root/scripts/launch-dev-app.sh" --skip-setup
 else
-    zsh "$repo_root/scripts/launch-dev-app.sh"
+    "$repo_root/scripts/launch-dev-app.sh"
 fi
 
 say "Verifying the app is running"
@@ -124,9 +117,11 @@ echo "running (pid $(pgrep -x "$process_name" | tr '\n' ' '))"
 say "Event sound themes"
 echo "  bundled: peon (Orc Peon, ships with the app)"
 found_pack=false
-for manifest in "$packs_dir"/*/theme.json(N); do
+for manifest in "$packs_dir"/*/theme.json; do
+    [[ -e "$manifest" ]] || continue
     found_pack=true
-    echo "  ${manifest:h:t}"
+    # basename of the pack directory holding the manifest
+    echo "  $(basename "$(dirname "$manifest")")"
 done
 if $found_pack; then
     echo "pick one in Settings > Sound"

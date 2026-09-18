@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 #
 # Create a local self-signed code signing identity for Open Island dev
 # builds. One-time setup; idempotent on re-run.
@@ -112,6 +112,6 @@ echo
 echo "✓ Identity \"$IDENTITY_NAME\" created and trusted."
 security find-identity -p codesigning -v "$KEYCHAIN" | grep "\"$IDENTITY_NAME\""
 echo
-echo "Next: run \`zsh scripts/launch-dev-app.sh\`. The bundle will now be"
+echo "Next: run \`./scripts/launch-dev-app.sh\`. The bundle will now be"
 echo "signed with this identity, and any Accessibility/Automation grant"
 echo "you give Open Island Dev will persist across rebuilds."

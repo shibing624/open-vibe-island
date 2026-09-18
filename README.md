@@ -337,7 +337,7 @@ open Package.swift
 Build a local `.app` bundle:
 
 ```bash
-zsh scripts/package-app.sh
+./scripts/package-app.sh
 ```
 
 That script creates `output/package/Open Island.app` and `output/package/Open Island.zip`. Pass `OPEN_ISLAND_SIGN_IDENTITY` to sign the bundle. See [docs/packaging.md](docs/packaging.md) for the full path, including notarization.

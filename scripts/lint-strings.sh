@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # Validates all .strings files with plutil to catch syntax errors
 # (unescaped quotes, bad Unicode, missing semicolons, etc.) early.
 
@@ -13,7 +13,9 @@ while IFS= read -r file; do
         plutil -lint "$file" 2>&1 | sed 's/^/  /'
         failed=1
     fi
-done < <(find "$repo_root/Sources" -name '*.strings' -type f)
+done <<EOF
+$(find "$repo_root/Sources" -name '*.strings' -type f)
+EOF
 
 if (( failed )); then
     echo ""

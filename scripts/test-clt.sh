@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 # Runs the test suite with Swift Testing on Command Line Tools-only setups,
 # where plain `swift test` fails with "no such module 'Testing'". Full Xcode

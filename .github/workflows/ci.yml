@@ -23,7 +23,7 @@ jobs:
         run: swift --version
 
       - name: Run CI checks
-        run: zsh scripts/harness.sh ci
+        run: ./scripts/harness.sh ci
 
   package-verify:
     runs-on: macos-26
@@ -36,7 +36,7 @@ jobs:
           pip3 install --break-system-packages Pillow
 
       - name: Build and package
-        run: zsh scripts/package-app.sh
+        run: ./scripts/package-app.sh
 
       # Bundle structure is verified inside package-app.sh itself.
       # No separate verify step needed — the script exits non-zero on

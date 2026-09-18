@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 
 set -euo pipefail
 
@@ -148,7 +148,7 @@ else
     echo
     echo "⚠ Using ad-hoc signing. macOS TCC grants (Accessibility, Automation)"
     echo "  will be invalidated on every rebuild. Run once to fix:"
-    echo "    zsh scripts/setup-dev-signing.sh"
+    echo "    ./scripts/setup-dev-signing.sh"
     echo
 fi
 

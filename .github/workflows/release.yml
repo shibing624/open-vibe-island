@@ -84,7 +84,7 @@ jobs:
           OPEN_ISLAND_BUILD_NUMBER: ${{ github.run_number }}
           OPEN_ISLAND_SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           OPEN_ISLAND_UNIVERSAL: "true"
-        run: zsh scripts/package-app.sh
+        run: ./scripts/package-app.sh
 
       - name: Verify artifacts
         run: |
@@ -181,7 +181,7 @@ jobs:
       - name: Update appcast.xml
         if: steps.sparkle_sign.outputs.signed == 'true'
         run: |
-          zsh scripts/update-appcast.sh \
+          ./scripts/update-appcast.sh \
             "${{ steps.version.outputs.version }}" \
             "${{ github.run_number }}" \
             "${{ steps.sparkle_sign.outputs.ed_signature }}" \

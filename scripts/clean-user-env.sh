@@ -1,6 +1,6 @@
-#!/bin/zsh
+#!/usr/bin/env bash
 # clean-user-env.sh — Reset to a clean "new user" state for testing.
-# Usage: zsh scripts/clean-user-env.sh [--dry-run]
+# Usage: scripts/clean-user-env.sh [--dry-run]
 #
 # This removes all Open Island (and legacy Vibe Island) artifacts from the
 # current user's environment, simulating a fresh install.
@@ -8,7 +8,9 @@
 set -euo pipefail
 
 DRY_RUN=false
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN=true
+if [[ "${1:-}" == "--dry-run" ]]; then
+    DRY_RUN=true
+fi
 
 red()    { printf '\033[31m%s\033[0m\n' "$1"; }
 green()  { printf '\033[32m%s\033[0m\n' "$1"; }
@@ -26,9 +28,14 @@ clean_path() {
     fi
 }
 
+# Removes every file matching a glob. The glob characters arrive inside the
+# argument (callers write `~/.codex/'config.toml.backup.*'`) so the expansion
+# happens here; when nothing matches, bash yields the pattern literally, and
+# `clean_path`'s own existence test is what discards it.
 clean_glob() {
     local pattern="$1"
-    for f in $~pattern(N); do
+    local f
+    for f in $pattern; do
         clean_path "$f"
     done
 }
