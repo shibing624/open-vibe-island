@@ -290,193 +290,195 @@ struct TerminalJumpService {
         self.tmuxCommandRunner = tmuxCommandRunner
     }
 
+    /// Probe, plan, execute.
+    ///
+    /// The three used to be one 480-line function whose branch order was the
+    /// only record of the jump policy, which is why adding a terminal meant
+    /// editing a dozen places and why a wrong target could only be reproduced
+    /// by hand. The probe is the only part that touches the machine; the plan
+    /// is a value, and the executor is the only part that sequences.
     func jump(to target: JumpTarget) throws -> String {
-        // tmux sessions: switch pane first, then use the terminal-specific
-        // jump to focus the correct window/tab (not just activate the app).
-        if let tmuxTarget = target.tmuxTarget, !tmuxTarget.isEmpty {
-            let paneSelected = tmuxPaneSelector.map { $0(target) } ?? jumpToTmuxPane(target)
+        let program = try planProgram(for: target)
+        return try JumpExecutor.execute(program, perform: perform(_:))
+    }
 
-            let descriptor = resolveTerminalApp(preferredName: target.terminalApp)
+    /// The plan for `target`, with its block reason turned into the error
+    /// `jump(to:)` reports.
+    func planProgram(for target: JumpTarget) throws -> JumpProgram {
+        switch JumpPlanner.plan(target, environment: probeEnvironment(for: target)) {
+        case let .steps(program):
+            return program
+        case let .blocked(reason):
+            throw reason.jumpError
+        }
+    }
 
-            // Use the full terminal-specific jump (AppleScript for Ghostty/iTerm,
-            // CLI for WezTerm, etc.) to focus the correct window/tab.
-            if let descriptor {
-                switch descriptor.bundleIdentifier {
-                case "com.mitchellh.ghostty":
-                    if try jumpToGhosttyTerminal(target) {
-                        return "Focused the matching tmux pane in Ghostty."
-                    }
-                case "com.googlecode.iterm2":
-                    if try jumpToITermSession(target) {
-                        return "Focused the matching tmux pane in iTerm."
-                    }
-                case "com.apple.Terminal":
-                    if try jumpToTerminalTab(target) {
-                        return "Focused the matching tmux pane in Terminal."
-                    }
-                case "com.cmuxterm.app":
-                    // The pane lives inside one cmux tab. Selecting the pane is
-                    // invisible while cmux still shows another tab, so the
-                    // surface has to be focused as well — and that is also what
-                    // switches workspaces when the tab sits in another one.
-                    if jumpToCmuxTerminal(target) {
-                        return paneSelected
-                            ? "Focused the matching tmux pane in cmux."
-                            : "Focused the matching cmux tab. tmux pane targeting failed."
-                    }
-                default:
-                    break
-                }
+    // MARK: - Environment probe
 
-                // Fallback: at least activate the app
-                try openAction(["-b", descriptor.bundleIdentifier])
-                return paneSelected
-                    ? "Focused the matching tmux pane and activated \(descriptor.displayName)."
-                    : "Activated \(descriptor.displayName). tmux pane targeting failed."
+    /// Gathers everything planning branches on. The only part of a jump that
+    /// asks the machine anything; the planner reads the result as data.
+    func probeEnvironment(for target: JumpTarget) -> JumpEnvironment {
+        let descriptor = jumpDescriptor(for: target)
+        let appIsRunning = descriptor.map { appRunningChecker($0.resolvedBundleIdentifier) } ?? false
+        // Uniformly nil when there is no directory: the fallback that opens one
+        // requires both a resolved descriptor and a directory that exists, and
+        // an invented `true` there would read as a fact nobody checked.
+        let workingDirectoryExists = target.workingDirectory
+            .map { FileManager.default.fileExists(atPath: $0) } ?? false
+
+        var weztermCLIPath: String?
+        if let descriptor, descriptor.kind == .weztermFamily {
+            weztermCLIPath = weztermFamilyCLIPath(for: descriptor.resolvedBundleIdentifier)
+        }
+
+        return JumpEnvironment(
+            descriptor: descriptor,
+            appIsRunning: appIsRunning,
+            workingDirectoryExists: workingDirectoryExists,
+            weztermCLIPath: weztermCLIPath,
+            zellij: probeZellij(target)
+        )
+    }
+
+    /// Resolves the target's terminal name and classifies it into the kind the
+    /// plan branches on, so no branch has to read a bundle identifier or a
+    /// string again.
+    private func jumpDescriptor(for target: JumpTarget) -> JumpDescriptor? {
+        guard let descriptor = resolveTerminalApp(preferredName: target.terminalApp) else {
+            return nil
+        }
+
+        let preferredBundleIdentifier = preferredBundleIdentifierForAlias(
+            for: descriptor,
+            normalizedPreferredName: normalizeTerminalAppName(target.terminalApp)
+        )
+        let resolvedBundleIdentifier = resolveBundleIdentifier(
+            for: descriptor,
+            preferredBundleIdentifier: preferredBundleIdentifier
+        )
+
+        let kind: JumpTerminalKind
+        switch resolvedBundleIdentifier {
+        case "com.mitchellh.ghostty": kind = .ghostty
+        case "com.googlecode.iterm2": kind = .iterm
+        case "com.apple.Terminal": kind = .terminalApp
+        case "com.cmuxterm.app": kind = .cmux
+        case "dev.warp.Warp-Stable": kind = .warp
+        case "fun.tw93.kaku", "com.github.wez.wezterm": kind = .weztermFamily
+        case "com.openai.codex": kind = .codexApp
+        case "com.anthropic.claudefordesktop": kind = .claudeApp
+        case "com.conductor.app": kind = .conductorApp
+        case let id where Self.vscodeFamilyBundleIDs.contains(id): kind = .vscodeFamily
+        case let id where Self.jetbrainsBundleIDs.contains(id): kind = .jetbrains
+        default: kind = .other
+        }
+
+        return JumpDescriptor(
+            displayName: descriptor.displayName,
+            resolvedBundleIdentifier: resolvedBundleIdentifier,
+            declaredBundleIdentifier: descriptor.bundleIdentifier,
+            kind: kind
+        )
+    }
+
+    /// Locates the Zellij pane the session recorded, so the planner only has to
+    /// decide what to do with it.
+    private func probeZellij(_ target: JumpTarget) -> ZellijProbe {
+        guard target.terminalApp.lowercased() == "zellij" else {
+            return .notZellij
+        }
+
+        guard let encoded = target.terminalSessionID, !encoded.isEmpty else {
+            return .blocked(.multiplexerUnavailable(Self.zellijUnlocatedMessage))
+        }
+
+        let parts = encoded.split(separator: ":", maxSplits: 1)
+        guard let paneID = Int(parts[0]) else {
+            return .blocked(.multiplexerUnavailable(Self.zellijUnlocatedMessage))
+        }
+        let sessionName = parts.count > 1 ? String(parts[1]) : nil
+
+        guard let zellijPath = resolveZellijPath() else {
+            return .blocked(.multiplexerUnavailable(Self.zellijUnlocatedMessage))
+        }
+
+        guard let tabPosition = zellijTabPosition(
+            zellijPath: zellijPath,
+            sessionName: sessionName,
+            paneID: paneID
+        ) else {
+            return .blocked(.multiplexerUnavailable(Self.zellijUnlocatedMessage))
+        }
+
+        return .located(path: zellijPath, session: sessionName, tabPosition: tabPosition)
+    }
+
+    /// What the Zellij path reports when the pane cannot be found. Whichever
+    /// step of the probe gave up, the user gets this one sentence: the
+    /// distinction is not actionable for them, and it was never surfaced
+    /// before either.
+    private static let zellijUnlocatedMessage = "Zellij (could not locate the pane)"
+
+    // MARK: - Step execution
+
+    /// Performs one planned action.
+    ///
+    /// `nil` from a terminal helper means "this did not land" and the plan
+    /// carries on to its next step; only `open` failing is fatal, which is the
+    /// behaviour the ladder had.
+    private func perform(_ action: JumpAction) throws -> JumpStepOutcome {
+        switch action {
+        case let .tmuxSelectPane(target):
+            let selected = tmuxPaneSelector.map { $0(target) } ?? jumpToTmuxPane(target)
+            return selected ? .keepGoing : .failed
+
+        case let .focusGhostty(target):
+            return try jumpToGhosttyTerminal(target) ? .keepGoing : .failed
+        case let .focusITerm(target):
+            return try jumpToITermSession(target) ? .keepGoing : .failed
+        case let .focusTerminalTab(target):
+            return try jumpToTerminalTab(target) ? .keepGoing : .failed
+        case let .focusCmux(target):
+            return jumpToCmuxTerminal(target) ? .keepGoing : .failed
+
+        case let .focusZellij(path, session, tabPosition):
+            var arguments: [String] = []
+            if let session, !session.isEmpty {
+                arguments += ["--session", session]
             }
+            arguments += ["action", "go-to-tab", "\(tabPosition + 1)"]
+            return BoundedProcess.succeeds(
+                executableURL: URL(fileURLWithPath: path),
+                arguments: arguments
+            ) ? .keepGoing : .failed
 
-            if paneSelected {
-                return "Focused the matching tmux pane."
-            }
-        }
+        case let .focusWarp(target):
+            return .completed(try jumpToWarpPane(target))
 
-        let normalizedPreferredName = normalizeTerminalAppName(target.terminalApp)
-        let descriptor = resolveTerminalApp(preferredName: target.terminalApp)
-        let hasWorkingDirectory = target.workingDirectory.map { FileManager.default.fileExists(atPath: $0) } ?? false
-        let hasPreciseLocator = [target.terminalSessionID, target.terminalTTY].contains {
-            guard let value = $0?.trimmingCharacters(in: .whitespacesAndNewlines) else {
-                return false
-            }
-            return !value.isEmpty
-        }
-        let preferredBundleIdentifier: String?
-        if let descriptor {
-            preferredBundleIdentifier = preferredBundleIdentifierForAlias(
-                for: descriptor,
-                normalizedPreferredName: normalizedPreferredName
-            )
-        } else {
-            preferredBundleIdentifier = nil
-        }
+        case let .focusWeztermFamily(cliPath, bundleIdentifier, target):
+            return jumpToWeztermFamilyTerminal(
+                target,
+                cliPath: cliPath,
+                bundleIdentifier: bundleIdentifier
+            ) ? .keepGoing : .failed
 
-        let resolvedBundleIdentifier: String?
-        if let descriptor {
-            resolvedBundleIdentifier = resolveBundleIdentifier(
-                for: descriptor,
-                preferredBundleIdentifier: preferredBundleIdentifier
-            )
-        } else {
-            resolvedBundleIdentifier = nil
-        }
-        let appIsRunning = resolvedBundleIdentifier.map(appRunningChecker) ?? false
+        case let .openWorkspace(cli, arguments):
+            return processRunner(cli, arguments) ? .keepGoing : .failed
 
-        // Zellij is a terminal multiplexer, not a macOS .app. Handle it
-        // before the descriptor-based dispatch since it won't have one.
-        if target.terminalApp.lowercased() == "zellij" {
-            if jumpToZellijPane(target) {
-                return "Focused the matching Zellij pane."
-            }
-            // No guessing at the host: which emulator draws this Zellij session
-            // is not implied by which emulator happens to be running. The old
-            // fallback activated the first running entry of `knownApps`, which
-            // is ordered, so a Zellij session in Ghostty raised iTerm whenever
-            // iTerm was open. Failing here is honest and reaches the Finder-cwd
-            // fallback that jump() applies to unresolvable hosts.
-            throw TerminalJumpError.unsupportedTerminal("Zellij (could not locate the pane)")
-        }
+        case let .openApp(bundleIdentifier, path):
+            // A path means "open the app at this directory"; the bare form
+            // brings the app forward.
+            try openAction(path.map { ["-b", bundleIdentifier, $0] } ?? ["-b", bundleIdentifier])
+            return .keepGoing
 
-        if let descriptor {
-            switch resolvedBundleIdentifier ?? descriptor.bundleIdentifier {
-            case "com.openai.codex":
-                // If we have a thread ID, use the codex:// URL scheme to
-                // open the specific conversation directly.  Otherwise just
-                // activate the app.
-                if let threadID = target.codexThreadID, !threadID.isEmpty {
-                    try openAction(["codex://threads/\(threadID)"])
-                    return "Focused the Codex.app conversation."
-                }
-                try openAction(["-b", "com.openai.codex"])
-                return "Activated Codex.app."
-            case "com.anthropic.claudefordesktop":
-                // Claude Desktop hosts the conversation in-app; there is no
-                // per-session deep link, so just bring the app forward.
-                try openAction(["-b", "com.anthropic.claudefordesktop"])
-                return "Activated Claude."
-            case "com.conductor.app":
-                // No per-session deep link; bring the app forward, like Claude.app.
-                try openAction(["-b", "com.conductor.app"])
-                return "Activated Conductor."
-            case "com.googlecode.iterm2":
-                if try jumpToITermSession(target) {
-                    return "Focused the matching iTerm session."
-                }
-            case "com.cmuxterm.app":
-                if jumpToCmuxTerminal(target) {
-                    return "Focused the matching cmux terminal."
-                }
-            case "com.mitchellh.ghostty":
-                if try jumpToGhosttyTerminal(target) {
-                    return "Focused the matching Ghostty terminal."
-                }
-            case "com.apple.Terminal":
-                if try jumpToTerminalTab(target) {
-                    return "Focused the matching Terminal tab."
-                }
-            case "dev.warp.Warp-Stable":
-                return try jumpToWarpPane(target)
-            case "fun.tw93.kaku", "com.github.wez.wezterm":
-                if let cliPath = weztermFamilyCLIPath(for: descriptor.bundleIdentifier),
-                   jumpToWeztermFamilyTerminal(target, cliPath: cliPath, bundleIdentifier: descriptor.bundleIdentifier) {
-                    return "Focused the matching \(descriptor.displayName) pane."
-                }
-            case let id where Self.vscodeFamilyBundleIDs.contains(id):
-                if let workingDirectory = target.workingDirectory {
-                    let opened = jumpToVSCodeFamilyWorkspace(workingDirectory, bundleIdentifier: id)
-                    if opened {
-                        return "Focused the matching \(descriptor.displayName) workspace."
-                    }
-                }
-                if appIsRunning {
-                    try openAction(["-b", id])
-                    return "Activated \(descriptor.displayName)."
-                }
-            case let id where Self.jetbrainsBundleIDs.contains(id):
-                if let workingDirectory = target.workingDirectory {
-                    let opened = jumpToJetBrainsProject(workingDirectory, bundleIdentifier: id)
-                    if opened {
-                        return "Focused the matching \(descriptor.displayName) project."
-                    }
-                }
-                if appIsRunning {
-                    try openAction(["-b", id])
-                    return "Activated \(descriptor.displayName)."
-                }
-            default:
-                break
-            }
-        }
+        case let .openURL(url):
+            try openAction([url])
+            return .keepGoing
 
-        if let descriptor, hasPreciseLocator, appIsRunning {
-            try openAction(["-b", resolvedBundleIdentifier ?? descriptor.bundleIdentifier])
-            return "Activated \(descriptor.displayName). Exact pane targeting could not find the live terminal."
+        case let .revealInFinder(path):
+            try openAction([path])
+            return .keepGoing
         }
-
-        if let descriptor, hasWorkingDirectory, let workingDirectory = target.workingDirectory {
-            try openAction(["-b", resolvedBundleIdentifier ?? descriptor.bundleIdentifier, workingDirectory])
-            return "Opened \(target.workspaceName) in \(descriptor.displayName). Exact pane targeting is still best-effort."
-        }
-
-        if let descriptor {
-            try openAction(["-b", resolvedBundleIdentifier ?? descriptor.bundleIdentifier])
-            return "Activated \(descriptor.displayName). Exact pane targeting is still best-effort."
-        }
-
-        if hasWorkingDirectory, let workingDirectory = target.workingDirectory {
-            try openAction([workingDirectory])
-            return "Opened \(target.workspaceName) in Finder because no supported terminal app could be resolved."
-        }
-
-        throw TerminalJumpError.unsupportedTerminal(target.terminalApp)
     }
 
     private func jumpToITermSession(_ target: JumpTarget) throws -> Bool {
@@ -526,13 +528,6 @@ struct TerminalJumpService {
         "com.qoder.app": "qoder",
     ]
 
-    private func jumpToVSCodeFamilyWorkspace(_ workspacePath: String, bundleIdentifier: String) -> Bool {
-        guard let cli = Self.vscodeFamilyCLI[bundleIdentifier] else {
-            return false
-        }
-        return processRunner(cli, ["-r", workspacePath])
-    }
-
     // MARK: - JetBrains IDE family
 
     /// Maps bundle identifiers to the CLI launcher script name (typically in
@@ -548,13 +543,6 @@ struct TerminalJumpService {
         "com.jetbrains.rider": "rider",
         "com.jetbrains.rustrover": "rustrover",
     ]
-
-    private func jumpToJetBrainsProject(_ projectPath: String, bundleIdentifier: String) -> Bool {
-        guard let cli = Self.jetbrainsCLI[bundleIdentifier] else {
-            return false
-        }
-        return processRunner(cli, [projectPath])
-    }
 
     private func jumpToCmuxTerminal(_ target: JumpTarget) -> Bool {
         guard let surfaceID = target.terminalSessionID,
@@ -806,51 +794,6 @@ struct TerminalJumpService {
     }
 
     // MARK: - Zellij CLI-based jump
-
-    /// Parses the encoded `terminalSessionID` (format: `paneId:sessionName`)
-    /// and uses `zellij action` to switch to the tab containing that pane.
-    private func jumpToZellijPane(_ target: JumpTarget) -> Bool {
-        guard let encoded = target.terminalSessionID, !encoded.isEmpty else {
-            return false
-        }
-
-        let parts = encoded.split(separator: ":", maxSplits: 1)
-        let paneIDString = String(parts[0])
-        let sessionName = parts.count > 1 ? String(parts[1]) : nil
-
-        guard let paneID = Int(paneIDString) else {
-            return false
-        }
-
-        guard let zellijPath = resolveZellijPath() else {
-            return false
-        }
-
-        // Query all panes to find which tab contains our target pane.
-        guard let tabPosition = zellijTabPosition(
-            zellijPath: zellijPath,
-            sessionName: sessionName,
-            paneID: paneID
-        ) else {
-            return false
-        }
-
-        // Switch to the tab (1-indexed).
-        var goToTabArguments: [String] = []
-        if let sessionName, !sessionName.isEmpty {
-            goToTabArguments += ["--session", sessionName]
-        }
-        goToTabArguments += ["action", "go-to-tab", "\(tabPosition + 1)"]
-
-        // The host emulator is deliberately not activated here: see the note in
-        // jump(). Zellij switched its own tab, which is the part we can do
-        // correctly; raising a guessed window on top of it is what moved focus
-        // to the wrong terminal.
-        return BoundedProcess.succeeds(
-            executableURL: URL(fileURLWithPath: zellijPath),
-            arguments: goToTabArguments
-        )
-    }
 
     private func resolveZellijPath() -> String? {
         let candidates = [
@@ -1297,10 +1240,6 @@ struct TerminalJumpService {
         preferredName
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-    }
-
-    private func isInstalled(descriptor: TerminalAppDescriptor) -> Bool {
-        descriptor.allBundleIdentifiers.contains { applicationResolver($0) != nil }
     }
 
     private func preferredBundleIdentifierForAlias(
