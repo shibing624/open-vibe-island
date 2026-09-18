@@ -235,6 +235,13 @@ public extension GeminiHookPayload {
             payload.terminalApp = inferTerminalApp(from: environment)
         }
 
+        // For cmux, use CMUX_SURFACE_ID as the terminal session identifier.
+        // cmux is in `noLocatorTerminalApps` below — asking its focused window
+        // would stamp whichever tab the user last looked at instead of this one.
+        if isCmuxTerminalApp(payload.terminalApp), payload.terminalSessionID == nil {
+            payload.terminalSessionID = HookTerminalContext.cmuxSurfaceID(from: environment)
+        }
+
         if payload.terminalTTY == nil {
             payload.terminalTTY = currentTTYProvider()
         }

@@ -157,6 +157,31 @@ enum HookTerminalContext {
         return (target, socketPath)
     }
 
+    /// The cmux surface (its "tab") the agent is running in.
+    ///
+    /// `locator(for:)` cannot answer this: it asks the *focused* window, which
+    /// in cmux would stamp whichever tab the user last looked at rather than the
+    /// tab holding the agent — the same mistake `opaqueTerminalApps` exists to
+    /// prevent. The environment is the only honest source, and cmux sets
+    /// `CMUX_SURFACE_ID` in every surface it spawns. `TerminalJumpService` hands
+    /// this straight to cmux's `surface.focus` socket method, which is also what
+    /// switches the enclosing workspace when the target surface lives in
+    /// another one.
+    ///
+    /// Captured independently of tmux on purpose: a tmux pane inside a cmux
+    /// surface is the normal case here, and focusing the pane is useless while
+    /// cmux is still showing a different tab. Presenting the surface alone would
+    /// also have to be undone after the pane is selected.
+    static func cmuxSurfaceID(from environment: [String: String]) -> String? {
+        guard let surfaceID = environment["CMUX_SURFACE_ID"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+            !surfaceID.isEmpty else {
+            return nil
+        }
+
+        return surfaceID
+    }
+
     /// Asks tmux for the `session:window.pane` address of one pane.
     static func defaultTmuxTarget(paneID: String, socketPath: String?) -> String? {
         guard let tmuxPath = resolveTmuxPath() else {

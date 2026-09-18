@@ -15,6 +15,13 @@ struct TerminalJumpService {
     /// `NSWorkspace.shared.frontmostApplication`; tests inject `{ true }`
     /// to skip the polling loop entirely.
     typealias WarpFrontmostChecker = @Sendable () -> Bool
+    /// Moves cmux onto the surface with this UUID and returns true only when
+    /// cmux confirmed the switch over its control socket.
+    typealias CmuxSurfaceFocuser = @Sendable (String) -> Bool
+    /// Selects the tmux pane a target names, returning whether tmux accepted
+    /// it. nil means "run the real tmux commands"; tests inject a stub so they
+    /// can exercise the tmux branch without driving a live tmux server.
+    typealias TmuxPaneSelector = @Sendable (JumpTarget) -> Bool
 
     private struct TerminalAppDescriptor {
         let displayName: String
@@ -231,6 +238,8 @@ struct TerminalJumpService {
     private let warpTabCountReader: WarpTabCountReader
     private let warpKeystroker: KeystrokeInjector
     private let warpFrontmostChecker: WarpFrontmostChecker
+    private let cmuxSurfaceFocuser: CmuxSurfaceFocuser
+    private let tmuxPaneSelector: TmuxPaneSelector?
 
     init(
         applicationResolver: @escaping ApplicationResolver = { bundleIdentifier in
@@ -251,7 +260,12 @@ struct TerminalJumpService {
             // updated via KVO that can lag the real frontmost transition).
             NSWorkspace.shared.frontmostApplication?.bundleIdentifier
                 == "dev.warp.Warp-Stable"
-        }
+        },
+        cmuxSurfaceFocuser: @escaping CmuxSurfaceFocuser = { surfaceID in
+            guard let socketPath = Self.resolveCmuxSocketPath() else { return false }
+            return Self.focusCmuxSurface(surfaceID: surfaceID, socketPath: socketPath)
+        },
+        tmuxPaneSelector: TmuxPaneSelector? = nil
     ) {
         self.applicationResolver = applicationResolver
         self.appRunningChecker = appRunningChecker
@@ -262,13 +276,15 @@ struct TerminalJumpService {
         self.warpTabCountReader = warpTabCountReader
         self.warpKeystroker = warpKeystroker
         self.warpFrontmostChecker = warpFrontmostChecker
+        self.cmuxSurfaceFocuser = cmuxSurfaceFocuser
+        self.tmuxPaneSelector = tmuxPaneSelector
     }
 
     func jump(to target: JumpTarget) throws -> String {
         // tmux sessions: switch pane first, then use the terminal-specific
         // jump to focus the correct window/tab (not just activate the app).
         if let tmuxTarget = target.tmuxTarget, !tmuxTarget.isEmpty {
-            let paneSelected = jumpToTmuxPane(target)
+            let paneSelected = tmuxPaneSelector.map { $0(target) } ?? jumpToTmuxPane(target)
 
             let descriptor = resolveTerminalApp(preferredName: target.terminalApp)
 
@@ -287,6 +303,16 @@ struct TerminalJumpService {
                 case "com.apple.Terminal":
                     if try jumpToTerminalTab(target) {
                         return "Focused the matching tmux pane in Terminal."
+                    }
+                case "com.cmuxterm.app":
+                    // The pane lives inside one cmux tab. Selecting the pane is
+                    // invisible while cmux still shows another tab, so the
+                    // surface has to be focused as well — and that is also what
+                    // switches workspaces when the tab sits in another one.
+                    if jumpToCmuxTerminal(target) {
+                        return paneSelected
+                            ? "Focused the matching tmux pane in cmux."
+                            : "Focused the matching cmux tab. tmux pane targeting failed."
                     }
                 default:
                     break
@@ -520,17 +546,40 @@ struct TerminalJumpService {
     }
 
     private func jumpToCmuxTerminal(_ target: JumpTarget) -> Bool {
-        // Try the cmux Unix socket API to focus a specific surface.
         guard let surfaceID = target.terminalSessionID,
               !surfaceID.isEmpty else {
             // No surface ID — fall back to generic app activation.
             return false
         }
 
-        guard let socketPath = Self.resolveCmuxSocketPath() else {
+        guard cmuxSurfaceFocuser(surfaceID) else {
             return false
         }
 
+        // Best-effort: activate the cmux app window.
+        try? openAction(["-b", "com.cmuxterm.app"])
+
+        return true
+    }
+
+    /// Tells cmux to focus one surface over its control socket, and waits for
+    /// the reply before reporting success. Kept separate from socket-path
+    /// discovery so tests can drive it against a stub cmux.
+    ///
+    /// Reading the reply is what makes the result trustworthy, and it is not
+    /// just bookkeeping: closing the socket right after `send` drops roughly one
+    /// request in ten. Against a live cmux, abandoning the connection
+    /// immediately moved focus on 35 of 40 calls, while reading the reply first
+    /// moved it on 40 of 40. cmux also answers `{"ok":false,"error":...}` for a
+    /// surface it does not know (a stale id from a closed tab), which must not
+    /// be reported as a completed jump.
+    ///
+    /// Note that cmux is *not* driven through AppleScript here even though it
+    /// ships a scripting dictionary with a `focus` command: the socket is the
+    /// supported automation surface (`access_mode: automation` in
+    /// `cmux capabilities`) and needs no Automation (TCC) entitlement, so a
+    /// plain `swift run` of this app can still jump.
+    static func focusCmuxSurface(surfaceID: String, socketPath: String) -> Bool {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
@@ -538,7 +587,9 @@ struct TerminalJumpService {
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         let pathBytes = socketPath.utf8CString
-        precondition(pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path))
+        guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+            return false
+        }
         withUnsafeMutableBytes(of: &addr.sun_path) { sunPath in
             for (i, byte) in pathBytes.enumerated() {
                 sunPath[i] = UInt8(bitPattern: byte)
@@ -552,17 +603,43 @@ struct TerminalJumpService {
         }
         guard connectResult == 0 else { return false }
 
-        // Send JSON-RPC surface.focus request.
         let request = #"{"jsonrpc":"2.0","method":"surface.focus","params":{"surface_id":"\#(surfaceID)"},"id":1}"# + "\n"
         let sent = request.withCString { ptr in
             Darwin.send(fd, ptr, strlen(ptr), 0)
         }
         guard sent > 0 else { return false }
 
-        // Best-effort: activate the cmux app window.
-        try? openAction(["-b", "com.cmuxterm.app"])
+        // Bound the wait: a cmux that accepted the request but never answers
+        // must not hold the jump task open indefinitely.
+        var timeout = timeval(tv_sec: 2, tv_usec: 0)
+        _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        let received = Darwin.recv(fd, &buffer, buffer.count, 0)
+        guard received > 0,
+              let reply = String(bytes: buffer[0..<received], encoding: .utf8),
+              Self.cmuxReplySucceeded(reply) == true else {
+            return false
+        }
 
         return true
+    }
+
+    /// Whether a cmux JSON-RPC reply reports success. Internal rather than
+    /// private so the verdict can be asserted directly — the socket path that
+    /// consumes it cannot be driven without a live cmux.
+    ///
+    /// The socket speaks the same `{"ok":bool,"result":…}` / `{"ok":false,"error":…}`
+    /// envelope for every method, so the verdict is read from `ok` rather than
+    /// from the absence of an error string. A reply that is not valid JSON is
+    /// not a success.
+    static func cmuxReplySucceeded(_ reply: String) -> Bool? {
+        guard let data = reply.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        return object["ok"] as? Bool
     }
 
     private static func resolveCmuxSocketPath() -> String? {

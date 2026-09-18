@@ -13,6 +13,10 @@ struct TerminalJumpServiceTests {
         var values: [(String, [String])] = []
     }
 
+    private final class FocusedSurfacesBox: @unchecked Sendable {
+        var values: [String] = []
+    }
+
     @Test
     func ghosttyJumpScriptActivatesWindowAndRetriesFocusUntilItSticks() {
         let target = JumpTarget(
@@ -355,6 +359,262 @@ struct TerminalJumpServiceTests {
             result.contains("Finder"),
             "Expected Finder fallback, got: \(result)"
         )
+    }
+
+    // MARK: - cmux
+
+    /// A cmux notification click must switch to the tab that owns the agent.
+    /// The surface id is the only handle for that, and `jumpToCmuxTerminal`
+    /// gives up without it — which is what made earlier builds merely bring
+    /// cmux forward.
+    @Test
+    func cmuxJumpFocusesTheRecordedSurface() throws {
+        let focusedSurfaces = FocusedSurfacesBox()
+        let service = TerminalJumpService(
+            applicationResolver: { id in
+                id == "com.cmuxterm.app" ? URL(fileURLWithPath: "/Applications/cmux.app") : nil
+            },
+            appRunningChecker: { id in id == "com.cmuxterm.app" },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" },
+            cmuxSurfaceFocuser: { surfaceID in
+                focusedSurfaces.values.append(surfaceID)
+                return true
+            }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "cmux",
+                workspaceName: "open-island",
+                paneTitle: "open-island-1",
+                workingDirectory: "/Users/u/open-island",
+                terminalSessionID: "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+            )
+        )
+
+        #expect(focusedSurfaces.values == ["4FB58912-B60B-49EB-A1BD-A5C42A7536C4"])
+        #expect(result == "Focused the matching cmux terminal.")
+    }
+
+    /// The tmux branch used to fall through to `default` for cmux and merely
+    /// activate the app, so a tmux pane inside a cmux tab could never bring its
+    /// own tab forward — the pane got selected in a tab the user was not
+    /// looking at.
+    @Test
+    func cmuxJumpFocusesTheSurfaceWhenTheSessionIsInsideTmux() throws {
+        let focusedSurfaces = FocusedSurfacesBox()
+        let service = TerminalJumpService(
+            applicationResolver: { id in
+                id == "com.cmuxterm.app" ? URL(fileURLWithPath: "/Applications/cmux.app") : nil
+            },
+            appRunningChecker: { id in id == "com.cmuxterm.app" },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" },
+            cmuxSurfaceFocuser: { surfaceID in
+                focusedSurfaces.values.append(surfaceID)
+                return true
+            },
+            tmuxPaneSelector: { _ in true }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "cmux",
+                workspaceName: "open-island",
+                paneTitle: "open-island-1",
+                workingDirectory: "/Users/u/open-island",
+                terminalSessionID: "4FB58912-B60B-49EB-A1BD-A5C42A7536C4",
+                tmuxTarget: "oss-contributions:3.0",
+                tmuxSocketPath: "/private/tmp/tmux-501/default"
+            )
+        )
+
+        #expect(focusedSurfaces.values == ["4FB58912-B60B-49EB-A1BD-A5C42A7536C4"])
+        #expect(result == "Focused the matching tmux pane in cmux.")
+    }
+
+    /// When the pane itself cannot be selected the tab must still be focused:
+    /// landing the user in the right tab is the larger half of the jump, and
+    /// saying so is better than reporting the whole jump as failed.
+    @Test
+    func cmuxJumpStillFocusesTheTabWhenTmuxPaneSelectionFails() throws {
+        let focusedSurfaces = FocusedSurfacesBox()
+        let service = TerminalJumpService(
+            applicationResolver: { id in
+                id == "com.cmuxterm.app" ? URL(fileURLWithPath: "/Applications/cmux.app") : nil
+            },
+            appRunningChecker: { id in id == "com.cmuxterm.app" },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" },
+            cmuxSurfaceFocuser: { surfaceID in
+                focusedSurfaces.values.append(surfaceID)
+                return true
+            },
+            tmuxPaneSelector: { _ in false }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "cmux",
+                workspaceName: "open-island",
+                paneTitle: "open-island-1",
+                workingDirectory: "/Users/u/open-island",
+                terminalSessionID: "4FB58912-B60B-49EB-A1BD-A5C42A7536C4",
+                tmuxTarget: "oss-contributions:3.0",
+                tmuxSocketPath: "/private/tmp/tmux-501/default"
+            )
+        )
+
+        #expect(focusedSurfaces.values == ["4FB58912-B60B-49EB-A1BD-A5C42A7536C4"])
+        #expect(result == "Focused the matching cmux tab. tmux pane targeting failed.")
+    }
+
+    /// cmux refusing the surface (a stale id from a closed tab) must not be
+    /// reported as a completed jump: falling back to activating the app is
+    /// honest, claiming the tab was focused is not.
+    @Test
+    func cmuxJumpDoesNotClaimSuccessWhenCmuxRefusesTheSurface() throws {
+        let openedArguments = OpenedArgumentsBox()
+        let service = TerminalJumpService(
+            applicationResolver: { id in
+                id == "com.cmuxterm.app" ? URL(fileURLWithPath: "/Applications/cmux.app") : nil
+            },
+            appRunningChecker: { id in id == "com.cmuxterm.app" },
+            openAction: { arguments in openedArguments.values.append(arguments) },
+            appleScriptRunner: { _ in "" },
+            cmuxSurfaceFocuser: { _ in false }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "cmux",
+                workspaceName: "open-island",
+                paneTitle: "open-island-1",
+                workingDirectory: "/Users/u/open-island",
+                terminalSessionID: "STALE-SURFACE-ID"
+            )
+        )
+
+        #expect(openedArguments.values == [["-b", "com.cmuxterm.app"]])
+        #expect(result == "Activated cmux. Exact pane targeting could not find the live terminal.")
+    }
+
+    /// The verdict is read from cmux's own `ok` field, which is the one thing
+    /// that distinguishes "switched the tab" from "accepted the bytes". A
+    /// success envelope, a refusal for an unknown surface, and a reply that is
+    /// not JSON at all have to land on three different answers.
+    @Test
+    func cmuxReplyVerdictComesFromTheOkField() {
+        #expect(
+            TerminalJumpService.cmuxReplySucceeded(
+                #"{"ok":true,"id":1,"result":{"surface_ref":"surface:8"}}"#
+            ) == true
+        )
+        #expect(
+            TerminalJumpService.cmuxReplySucceeded(
+                #"{"ok":false,"id":1,"error":{"code":"not_found","message":"Workspace not found"}}"#
+            ) == false
+        )
+        #expect(TerminalJumpService.cmuxReplySucceeded("not json") == nil)
+        #expect(TerminalJumpService.cmuxReplySucceeded("") == nil)
+        // An envelope with no `ok` at all is not evidence of a switch.
+        #expect(TerminalJumpService.cmuxReplySucceeded(#"{"id":1,"result":{}}"#) == nil)
+    }
+
+    /// Pins the bytes cmux actually receives and the behaviour on each reply.
+    ///
+    /// The method name and the `surface_id` key are the contract with cmux, and
+    /// getting either wrong fails silently — a request cmux does not recognise
+    /// simply never moves the tab. A stub cmux is used because the real one
+    /// cannot be driven from a test.
+    @Test
+    func cmuxSurfaceFocusSpeaksTheSocketContractAndHonoursTheReply() throws {
+        let surfaceID = "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+
+        // Records what arrived, then answers with `reply`. A nil reply stands
+        // for a cmux that accepts the connection and then says nothing.
+        func runStub(reply: String?) -> (accepted: Bool, request: String) {
+            // /tmp rather than NSTemporaryDirectory(): the latter expands to a
+            // /var/folders/... path long enough that the socket path no longer
+            // fits in `sun_path`.
+            let directory = URL(fileURLWithPath: "/tmp")
+                .appendingPathComponent("cmux-stub-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let socketPath = directory.appendingPathComponent("cmux.sock").path
+
+            let serverFD = socket(AF_UNIX, SOCK_STREAM, 0)
+            guard serverFD >= 0 else { return (false, "") }
+            defer { close(serverFD) }
+
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            addr.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
+            let pathBytes = socketPath.utf8CString
+            guard pathBytes.count <= MemoryLayout.size(ofValue: addr.sun_path) else {
+                return (false, "")
+            }
+            withUnsafeMutableBytes(of: &addr.sun_path) { sunPath in
+                for (i, byte) in pathBytes.enumerated() {
+                    sunPath[i] = UInt8(bitPattern: byte)
+                }
+            }
+            let bound = withUnsafePointer(to: &addr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPtr in
+                    Darwin.bind(serverFD, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            guard bound == 0, listen(serverFD, 1) == 0 else { return (false, "") }
+
+            let acceptedBox = ReceivedRequestBox()
+            let done = DispatchSemaphore(value: 0)
+            DispatchQueue.global().async {
+                defer { done.signal() }
+                let client = accept(serverFD, nil, nil)
+                guard client >= 0 else { return }
+                defer { close(client) }
+
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                let n = read(client, &buffer, buffer.count)
+                guard n > 0 else { return }
+                acceptedBox.request = String(bytes: buffer[0..<n], encoding: .utf8) ?? ""
+
+                if let reply {
+                    let out = Array(reply.utf8)
+                    _ = out.withUnsafeBufferPointer { write(client, $0.baseAddress, $0.count) }
+                }
+            }
+
+            let accepted = TerminalJumpService.focusCmuxSurface(
+                surfaceID: surfaceID,
+                socketPath: socketPath
+            )
+            _ = done.wait(timeout: .now() + 5)
+            return (accepted, acceptedBox.request)
+        }
+
+        // A success envelope is the only thing that may count as a switch.
+        let success = runStub(
+            reply: #"{"ok":true,"id":1,"result":{"surface_ref":"surface:8"}}"# + "\n"
+        )
+        #expect(success.accepted)
+        #expect(success.request.contains(#""method":"surface.focus""#))
+        #expect(success.request.contains(#""surface_id":"\#(surfaceID)""#))
+
+        // cmux refusing the surface must not be reported as a jump.
+        let refused = runStub(
+            reply: #"{"ok":false,"id":1,"error":{"code":"not_found","message":"Workspace not found"}}"# + "\n"
+        )
+        #expect(!refused.accepted)
+
+        // Silence must not be reported as a jump either.
+        let silent = runStub(reply: nil)
+        #expect(!silent.accepted)
+    }
+
+    private final class ReceivedRequestBox: @unchecked Sendable {
+        var request = ""
     }
 
     @Test

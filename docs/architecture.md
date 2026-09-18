@@ -79,7 +79,7 @@ Terminal focus restoration is implemented per-terminal:
 |---|---|
 | Terminal.app | TTY targeting via AppleScript |
 | Ghostty | Window ID matching |
-| cmux | Unix socket API |
+| cmux | Unix socket API (`surface.focus` on `CMUX_SOCKET_PATH`) |
 | Kaku | CLI pane targeting |
 | WezTerm | CLI pane targeting |
 | iTerm2 | AppleScript session/TTY probe |

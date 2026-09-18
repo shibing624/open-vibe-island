@@ -283,4 +283,124 @@ struct HookTmuxIdentityTests {
         #expect(payload.defaultJumpTarget.tmuxTarget == "demo:2.1")
         #expect(payload.defaultJumpTarget.tmuxSocketPath == "/private/tmp/tmux-501/default")
     }
+
+    // MARK: - cmux surface capture
+    //
+    // cmux has no panel in the island until this exists: the payload resolved
+    // `terminal_app == "cmux"`, but `cmux` is in `opaqueTerminalApps` so the
+    // focused-window locator is skipped and `terminalSessionID` stayed nil.
+    // `TerminalJumpService.jumpToCmuxTerminal` needs that id, and bails out
+    // without it — so clicking a cmux notification only brought the app
+    // forward, never the tab.
+
+    private static let cmuxEnvironment = [
+        "CMUX_SURFACE_ID": "4FB58912-B60B-49EB-A1BD-A5C42A7536C4",
+        "CMUX_WORKSPACE_ID": "CE98892E-C498-4A85-BB4B-512E08AB5578",
+        "CMUX_SOCKET_PATH": "/Users/me/.local/state/cmux/cmux.sock",
+        "TERM_PROGRAM": "ghostty"
+    ]
+
+    @Test
+    func cmuxSurfaceIDReadsTheEnvironmentVariable() {
+        #expect(
+            HookTerminalContext.cmuxSurfaceID(from: Self.cmuxEnvironment)
+                == "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+        )
+    }
+
+    /// A cmux tab that never exported the id must resolve to "unknown", not to
+    /// something that looks focusable — a blank id would be sent to cmux and
+    /// rejected there instead of degrading to app activation locally.
+    @Test
+    func cmuxSurfaceIDRejectsBlankAndMissingValues() {
+        #expect(HookTerminalContext.cmuxSurfaceID(from: [:]) == nil)
+        #expect(HookTerminalContext.cmuxSurfaceID(from: ["CMUX_SURFACE_ID": ""]) == nil)
+        #expect(HookTerminalContext.cmuxSurfaceID(from: ["CMUX_SURFACE_ID": "   "]) == nil)
+        #expect(
+            HookTerminalContext.cmuxSurfaceID(from: ["CMUX_SURFACE_ID": "  abc-123  "]) == "abc-123"
+        )
+    }
+
+    /// The whole point of the fix, at the end of the chain: an agentica session
+    /// started in a cmux tab must hand `TerminalJumpService` the surface id it
+    /// needs to switch tabs.
+    @Test
+    func agenticaPayloadInCmuxCarriesTheSurfaceIntoJumpTarget() {
+        let payload = AgenticaHookPayload(
+            hookEventName: .runStarted,
+            sessionID: "s1",
+            cwd: "/tmp/demo"
+        ).withRuntimeContext(
+            environment: Self.cmuxEnvironment,
+            currentTTYProvider: { "/dev/ttys004" },
+            terminalLocatorProvider: { _ in
+                Issue.record("cmux has no focused-window locator to ask")
+                return (nil, nil, nil)
+            }
+        )
+
+        #expect(payload.terminalApp == "cmux")
+        #expect(payload.terminalSessionID == "4FB58912-B60B-49EB-A1BD-A5C42A7536C4")
+        #expect(
+            payload.defaultJumpTarget.terminalSessionID == "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+        )
+    }
+
+    /// tmux running inside a cmux tab is the ordinary case, and it is exactly
+    /// where the surface id used to be lost: tmux identity makes the payload
+    /// return early. Focusing the pane alone leaves cmux showing some other
+    /// tab, so both halves have to travel together.
+    @Test
+    func agenticaPayloadInTmuxInsideCmuxKeepsBothPaneAndSurface() {
+        let payload = AgenticaHookPayload(
+            hookEventName: .runStarted,
+            sessionID: "s1",
+            cwd: "/tmp/demo"
+        ).withRuntimeContext(
+            environment: Self.cmuxEnvironment.merging(
+                [
+                    "TMUX": "/private/tmp/tmux-501/default,12345,0",
+                    "TMUX_PANE": "%3"
+                ]
+            ) { _, tmux in tmux },
+            currentTTYProvider: { "/dev/ttys004" },
+            terminalLocatorProvider: { _ in
+                Issue.record("the focused-window locator must not run inside tmux")
+                return (nil, nil, nil)
+            },
+            tmuxTargetResolver: Self.resolver(returning: "demo:2.1")
+        )
+
+        #expect(payload.defaultJumpTarget.tmuxTarget == "demo:2.1")
+        #expect(
+            payload.defaultJumpTarget.tmuxSocketPath == "/private/tmp/tmux-501/default"
+        )
+        #expect(
+            payload.defaultJumpTarget.terminalSessionID == "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+        )
+    }
+
+    /// Gemini CLI had the same hole. It is asserted separately because the
+    /// capture lives in a private per-source copy, so one source being fixed
+    /// says nothing about the other.
+    @Test
+    func geminiPayloadInCmuxCarriesTheSurfaceIntoJumpTarget() {
+        let payload = GeminiHookPayload(
+            cwd: "/tmp/demo",
+            hookEventName: .sessionStart,
+            sessionID: "s1"
+        ).withRuntimeContext(
+            environment: Self.cmuxEnvironment,
+            currentTTYProvider: { "/dev/ttys004" },
+            terminalLocatorProvider: { _ in
+                Issue.record("cmux has no focused-window locator to ask")
+                return (nil, nil, nil)
+            }
+        )
+
+        #expect(payload.defaultJumpTarget.terminalApp == "cmux")
+        #expect(
+            payload.defaultJumpTarget.terminalSessionID == "4FB58912-B60B-49EB-A1BD-A5C42A7536C4"
+        )
+    }
 }

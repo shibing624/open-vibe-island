@@ -651,7 +651,9 @@ The hook process infers the terminal type from environment variables at runtime:
 | `TERM_PROGRAM=Apple_Terminal` | `Terminal` |
 | `TERM_PROGRAM=WezTerm` | `WezTerm` |
 
-For iTerm, Terminal, and Ghostty the process additionally runs an AppleScript query to obtain the session ID, TTY, and window title — used to power the "jump back to terminal" feature. The `cmux` terminal uses `CMUX_SURFACE_ID` instead of AppleScript.
+For iTerm, Terminal, and Ghostty the process additionally runs an AppleScript query to obtain the session ID, TTY, and window title — used to power the "jump back to terminal" feature. The `cmux` terminal uses `CMUX_SURFACE_ID` instead: an AppleScript query can only report the *focused* cmux terminal, which is not necessarily the one running the agent, so the id cmux exports into each surface is the only source that identifies this tab. It lands in `terminal_session_id`, and the app consumes it with `surface.focus` on cmux's control socket — which also switches workspace when the tab lives in another one.
+
+That capture is not limited to the tmux case, and it is not dropped when the session does run inside tmux: the pane target and the surface id travel together, so one click selects the pane *and* brings its cmux tab forward. Every hook source that reports `terminal_app: cmux` fills the same field.
 
 ---
 

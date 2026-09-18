@@ -504,6 +504,16 @@ public extension AgenticaHookPayload {
             payload.terminalApp = HookTerminalContext.inferTerminalApp(from: environment)
         }
 
+        // For cmux, use CMUX_SURFACE_ID as the terminal session identifier.
+        // Captured ahead of the tmux early-return below: running tmux inside a
+        // cmux surface is ordinary here, and the pane target alone leaves the
+        // jump unable to switch cmux to the tab hosting that pane. Unlike the
+        // focused-window locator the early-return guards against, this is exact
+        // data about *this* surface rather than a guess at the frontmost one.
+        if payload.terminalApp?.lowercased() == "cmux", payload.terminalSessionID == nil {
+            payload.terminalSessionID = HookTerminalContext.cmuxSurfaceID(from: environment)
+        }
+
         if payload.terminalTTY == nil {
             payload.terminalTTY = transport?.tty ?? currentTTYProvider()
         }
