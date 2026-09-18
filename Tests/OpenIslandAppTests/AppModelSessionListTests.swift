@@ -505,6 +505,10 @@ struct AppModelSessionListTests {
     func bridgeEventsStillPromoteSessionsToAttached() {
         let now = Date(timeIntervalSince1970: 2_000)
         let model = AppModel()
+        // A live bridge event is the first prompt of its session, so it carries
+        // a `taskAcknowledge` cue into the app layer's sound service. This test
+        // is about attachment state, so mute rather than let the run make noise.
+        model.isSoundMuted = true
         model.state = SessionState(
             sessions: [
                 AgentSession(
@@ -633,6 +637,10 @@ struct AppModelSessionListTests {
         let model = AppModel(
             isNotificationSessionAlreadyFrontmost: { _ in false }
         )
+        // The permission request rings `inputRequired` and, because the session
+        // is not frontmost, the card is presented for real. This test is about
+        // the card, so mute rather than let the run make noise.
+        model.isSoundMuted = true
         model.notchStatus = .closed
         model.notchOpenReason = nil
         model.state = SessionState(
