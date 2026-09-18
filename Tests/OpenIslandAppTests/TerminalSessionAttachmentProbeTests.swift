@@ -889,6 +889,50 @@ struct TerminalSessionAttachmentProbeTests {
         #expect(updates["session-approval"] == .detached)
     }
 
+    /// Four agent tabs in one repository: every Ghostty surface reports the
+    /// same working directory, and only one of them is titled after the session
+    /// asking to be located. The shared directory must not bind the session to
+    /// one of the three tabs that are not its own — that is a jump raised on
+    /// another agent's conversation.
+    @Test
+    func ghosttySharedWorkingDirectoryDoesNotBindSessionToAnotherAgentsTab() {
+        let now = Date(timeIntervalSince1970: 3_000)
+        let probe = TerminalSessionAttachmentProbe()
+        let session = AgentSession(
+            id: "63a37f5d-4763-413e-a350-880cc4ad39a2",
+            title: "Claude · xuming",
+            tool: .claudeCode,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .completed,
+            summary: "Waiting for input",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "xuming",
+                paneTitle: "xuming · hi,g3",
+                workingDirectory: "/Users/u"
+            )
+        )
+
+        let resolutions = probe.sessionResolutions(
+            for: [session],
+            ghosttyAvailability: .available(
+                [
+                    .init(sessionID: "SURFACE-agentica", workingDirectory: "/Users/u", title: "agentica"),
+                    .init(sessionID: "SURFACE-opencode", workingDirectory: "/Users/u", title: "xuming · Greeting · ses_f4b9bf4c3ffe"),
+                    .init(sessionID: "SURFACE-claude", workingDirectory: "/Users/u", title: "xuming · hi,g3 · 63a37f5d-4763-41"),
+                    .init(sessionID: "SURFACE-codex", workingDirectory: "/Users/u", title: "codex"),
+                ],
+                appIsRunning: true
+            ),
+            terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
+            now: now
+        )
+
+        #expect(resolutions[session.id]?.correctedJumpTarget?.terminalSessionID == "SURFACE-claude")
+    }
+
     @Test
     func ghosttyPlainShellTitleDoesNotFallbackAttachOlderSessionByDirectory() {
         let now = Date(timeIntervalSince1970: 2_000)
@@ -921,6 +965,140 @@ struct TerminalSessionAttachmentProbeTests {
         )
 
         #expect(updates["older-shell-session"] == .detached)
+    }
+
+    /// A cmux session carries an exact surface id that cmux itself will focus
+    /// over its control socket. cmux is a separate app from standalone Ghostty,
+    /// so a Ghostty surface is never the terminal hosting it — but the probe
+    /// treats every terminal that is not Ghostty/Terminal/iTerm/Kaku/WezTerm as
+    /// "ambiguous" and offers it to the Ghostty matcher, whose working-directory
+    /// fallback then binds it to whichever standalone Ghostty tab shares the
+    /// directory and rewrites `terminalApp` to "Ghostty".
+    ///
+    /// That destroys the surface id and sends the jump to a different app than
+    /// the one the agent runs in — the reported symptom of landing on a
+    /// terminal showing another conversation.
+    @Test
+    func cmuxSessionKeepsItsSurfaceInsteadOfBeingRehomedToStandaloneGhostty() {
+        let now = Date(timeIntervalSince1970: 4_000)
+        let probe = TerminalSessionAttachmentProbe()
+        let session = AgentSession(
+            id: "9c1d2e3f-4a5b",
+            title: "Agentica · xuming",
+            tool: .agenticaCLI,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Running",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "cmux",
+                workspaceName: "xuming",
+                paneTitle: "Agentica · xuming",
+                workingDirectory: "/Users/u",
+                terminalSessionID: "CMUX-SURFACE-UUID"
+            )
+        )
+
+        let resolutions = probe.sessionResolutions(
+            for: [session],
+            ghosttyAvailability: .available(
+                [.init(sessionID: "GHOSTTY-SURFACE-UUID", workingDirectory: "/Users/u", title: "agentica")],
+                appIsRunning: true
+            ),
+            terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
+            now: now
+        )
+
+        #expect(resolutions[session.id]?.correctedJumpTarget == nil)
+        #expect(resolutions[session.id]?.correctedJumpTarget?.terminalApp != "Ghostty")
+    }
+
+    /// Two iTerm2 sessions whose titles both mention the session's, and a
+    /// session carrying no session id and no TTY to tell them apart. The title
+    /// is a substring test, so both snapshots match and the session ends up
+    /// bound to whichever iTerm reported last — a jump onto a tab running a
+    /// different agent. Nothing here identifies either tab, so neither may be
+    /// claimed.
+    @Test
+    func itermAmbiguousTitleDoesNotBindOnItsOwn() {
+        let now = Date(timeIntervalSince1970: 5_000)
+        let probe = TerminalSessionAttachmentProbe()
+        let session = AgentSession(
+            id: "5730b6f4-1111",
+            title: "Claude · xuming",
+            tool: .claudeCode,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Running",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "iTerm",
+                workspaceName: "xuming",
+                paneTitle: "claude ~/p/repo",
+                workingDirectory: "/Users/u"
+            )
+        )
+
+        let resolutions = probe.sessionResolutions(
+            for: [session],
+            ghosttyAvailability: .available([] as [TerminalSessionAttachmentProbe.GhosttyTerminalSnapshot], appIsRunning: false),
+            terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
+            itermAvailability: .available(
+                [
+                    .init(sessionID: "ITERM-A", tty: "/dev/ttys001", title: "claude ~/p/repo"),
+                    .init(sessionID: "ITERM-B", tty: "/dev/ttys002", title: "claude ~/p/repo"),
+                ],
+                appIsRunning: true
+            ),
+            now: now
+        )
+
+        #expect(resolutions[session.id]?.correctedJumpTarget == nil)
+    }
+
+    /// The same ambiguity, but for the terminal whose tab identity is a TTY:
+    /// two Terminal.app tabs, one TTY each, and the session names the second.
+    /// The TTY must decide regardless of which tab Terminal.app lists first.
+    @Test
+    func terminalTTYBindsTheTabTheSessionNames() {
+        let now = Date(timeIntervalSince1970: 6_000)
+        let probe = TerminalSessionAttachmentProbe()
+        let session = AgentSession(
+            id: "1111aaaa",
+            title: "Codex · worktree",
+            tool: .codex,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .completed,
+            summary: "Finished",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "Terminal",
+                workspaceName: "worktree",
+                paneTitle: "codex",
+                workingDirectory: "/tmp/worktree",
+                terminalTTY: "/dev/ttys002"
+            )
+        )
+
+        let resolutions = probe.sessionResolutions(
+            for: [session],
+            ghosttyAvailability: .available([] as [TerminalSessionAttachmentProbe.GhosttyTerminalSnapshot], appIsRunning: false),
+            terminalAvailability: .available(
+                [
+                    .init(tty: "/dev/ttys001", customTitle: "codex ~/tmp/other-worktree"),
+                    .init(tty: "/dev/ttys002", customTitle: "codex ~/tmp/worktree"),
+                ],
+                appIsRunning: true
+            ),
+            now: now
+        )
+
+        #expect(resolutions[session.id]?.attachmentState == .attached)
+        #expect(resolutions[session.id]?.correctedJumpTarget?.terminalTTY == "/dev/ttys002")
+        #expect(resolutions[session.id]?.correctedJumpTarget?.paneTitle == "codex ~/tmp/worktree")
     }
 
     private func ghosttySession(

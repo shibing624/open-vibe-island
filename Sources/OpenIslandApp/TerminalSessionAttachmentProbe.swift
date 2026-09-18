@@ -707,15 +707,67 @@ struct TerminalSessionAttachmentProbe {
             return [:]
         }
 
-        return snapshots.reduce(into: [String: TerminalTabSnapshot]()) { partialResult, snapshot in
-            guard let session = preferredSession(
-                from: sessions.filter { terminalSnapshot(snapshot, matches: $0) }
-            ) else {
-                return
+        var assignments: [String: TerminalTabSnapshot] = [:]
+        var claimedSessionIDs: Set<String> = []
+        var claimedSnapshotIndices: Set<Int> = []
+
+        // A TTY names exactly one session, so it decides on its own.
+        for (index, snapshot) in snapshots.enumerated() where !claimedSnapshotIndices.contains(index) {
+            guard let session = preferredSession(from: sessions.filter {
+                !claimedSessionIDs.contains($0.id) && terminalIdentityMatches(snapshot, session: $0)
+            }) else {
+                continue
             }
 
-            partialResult[session.id] = snapshot
+            assignments[session.id] = snapshot
+            claimedSessionIDs.insert(session.id)
+            claimedSnapshotIndices.insert(index)
         }
+
+        // The custom title is a substring test and may only decide when it is
+        // unambiguous from both directions. Several tabs of one agent in one
+        // repository carry titles that overlap, and the corrected target is
+        // written back onto the session, so a title-only guess would keep
+        // sending this session's jumps to another agent's tab.
+        for (index, snapshot) in snapshots.enumerated() where !claimedSnapshotIndices.contains(index) {
+            let candidates = sessions.filter {
+                !claimedSessionIDs.contains($0.id) && terminalTitleMatches(snapshot, session: $0)
+            }
+
+            guard candidates.count == 1, let session = candidates.first else {
+                continue
+            }
+
+            let snapshotsNamingSession = snapshots.indices.filter {
+                !claimedSnapshotIndices.contains($0) && terminalTitleMatches(snapshots[$0], session: session)
+            }
+
+            guard snapshotsNamingSession.count == 1 else {
+                continue
+            }
+
+            assignments[session.id] = snapshot
+            claimedSessionIDs.insert(session.id)
+            claimedSnapshotIndices.insert(index)
+        }
+
+        return assignments
+    }
+
+    private func terminalIdentityMatches(_ snapshot: TerminalTabSnapshot, session: AgentSession) -> Bool {
+        guard let tty = nonEmptyValue(session.jumpTarget?.terminalTTY) else {
+            return false
+        }
+
+        return snapshot.tty == tty
+    }
+
+    private func terminalTitleMatches(_ snapshot: TerminalTabSnapshot, session: AgentSession) -> Bool {
+        guard let paneTitle = nonEmptyValue(session.jumpTarget?.paneTitle) else {
+            return false
+        }
+
+        return snapshot.customTitle.contains(paneTitle)
     }
 
     private func correctedGhosttyJumpTarget(
@@ -808,18 +860,57 @@ struct TerminalSessionAttachmentProbe {
             return [:]
         }
 
-        return snapshots.reduce(into: [String: ITermSessionSnapshot]()) { partialResult, snapshot in
-            guard let session = preferredSession(
-                from: sessions.filter { itermSnapshot(snapshot, matches: $0) }
-            ) else {
-                return
+        var assignments: [String: ITermSessionSnapshot] = [:]
+        var claimedSessionIDs: Set<String> = []
+        var claimedSnapshotIndices: Set<Int> = []
+
+        // Identity first: an iTerm session id or a TTY names exactly one
+        // session, so either one decides on its own.
+        for (index, snapshot) in snapshots.enumerated() where !claimedSnapshotIndices.contains(index) {
+            guard let session = preferredSession(from: sessions.filter {
+                !claimedSessionIDs.contains($0.id) && itermIdentityMatches(snapshot, session: $0)
+            }) else {
+                continue
             }
 
-            partialResult[session.id] = snapshot
+            assignments[session.id] = snapshot
+            claimedSessionIDs.insert(session.id)
+            claimedSnapshotIndices.insert(index)
         }
+
+        // The title is a substring test, so it may only decide when it is
+        // unambiguous from both directions. Two Claude sessions in one
+        // repository are titled alike, and `correctedITermJumpTarget` writes
+        // whatever this picks back onto the session — so a title-only guess
+        // would bind the session to another agent's tab and keep sending its
+        // jumps there.
+        for (index, snapshot) in snapshots.enumerated() where !claimedSnapshotIndices.contains(index) {
+            let candidates = sessions.filter {
+                !claimedSessionIDs.contains($0.id) && itermTitleMatches(snapshot, session: $0)
+            }
+
+            guard candidates.count == 1, let session = candidates.first else {
+                continue
+            }
+
+            let snapshotsNamingSession = snapshots.indices.filter {
+                !claimedSnapshotIndices.contains($0) && itermTitleMatches(snapshots[$0], session: session)
+            }
+
+            guard snapshotsNamingSession.count == 1 else {
+                continue
+            }
+
+            assignments[session.id] = snapshot
+            claimedSessionIDs.insert(session.id)
+            claimedSnapshotIndices.insert(index)
+        }
+
+        return assignments
     }
 
-    private func itermSnapshot(_ snapshot: ITermSessionSnapshot, matches session: AgentSession) -> Bool {
+    /// Whether an iTerm session id or TTY names this session.
+    private func itermIdentityMatches(_ snapshot: ITermSessionSnapshot, session: AgentSession) -> Bool {
         guard let jumpTarget = session.jumpTarget else {
             return false
         }
@@ -834,7 +925,11 @@ struct TerminalSessionAttachmentProbe {
             return true
         }
 
-        guard let paneTitle = nonEmptyValue(jumpTarget.paneTitle) else {
+        return false
+    }
+
+    private func itermTitleMatches(_ snapshot: ITermSessionSnapshot, session: AgentSession) -> Bool {
+        guard let paneTitle = nonEmptyValue(session.jumpTarget?.paneTitle) else {
             return false
         }
 
@@ -893,22 +988,6 @@ struct TerminalSessionAttachmentProbe {
         }
 
         return snapshot.title.contains(paneTitle)
-    }
-
-    private func terminalSnapshot(_ snapshot: TerminalTabSnapshot, matches session: AgentSession) -> Bool {
-        guard let jumpTarget = session.jumpTarget else {
-            return false
-        }
-
-        if let tty = nonEmptyValue(jumpTarget.terminalTTY) {
-            return snapshot.tty == tty
-        }
-
-        guard let paneTitle = nonEmptyValue(jumpTarget.paneTitle) else {
-            return false
-        }
-
-        return snapshot.customTitle.contains(paneTitle)
     }
 
     private func activeProcessesBySessionID(

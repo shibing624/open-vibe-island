@@ -41,6 +41,96 @@ struct TerminalJumpTargetResolverTests {
 
     // MARK: - Ghostty
 
+    private func ghosttySnapshot(sessionID: String, title: String, workingDirectory: String = "/Users/u") -> TerminalJumpTargetResolver.GhosttyTerminalSnapshot {
+        TerminalJumpTargetResolver.GhosttyTerminalSnapshot(
+            sessionID: sessionID, workingDirectory: workingDirectory, title: title
+        )
+    }
+
+    /// The live shape the bug was reported from: four agent tabs open in one
+    /// repository, so every Ghostty surface reports the same working directory,
+    /// and the hook captured no surface id for some of the agents (only Claude
+    /// sets a per-surface env var; the opencode plugin captures a TTY, and
+    /// Ghostty's scripting dictionary exposes no tty at all).
+    ///
+    /// A working directory is not an identity when four tabs share it. Binding
+    /// on it anyway is how one session's jump was pointed at another session's
+    /// tab — the raised terminal then showed a different conversation, which is
+    /// exactly the reported symptom.
+    @Test
+    func ghosttySharedWorkingDirectoryDoesNotBindOnItsOwn() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            ghosttySnapshot(sessionID: "SURFACE-agentica", title: "agentica"),
+            ghosttySnapshot(sessionID: "SURFACE-opencode", title: "xuming · Greeting · ses_f4b9bf4c3ffe"),
+            ghosttySnapshot(sessionID: "SURFACE-claude", title: "xuming · hi,g3 · 63a37f5d-4763-41"),
+            ghosttySnapshot(sessionID: "SURFACE-codex", title: "codex"),
+        ]
+        // What the opencode hook actually produces in a standalone Ghostty: no
+        // surface id (nothing exposes the tty), and the default pane title. No
+        // part of this names one of the four tabs.
+        let sessions = [
+            session(
+                id: "opencode-ses_f4b9bf4c3ffe",
+                paneTitle: "OpenCode ses_f4b9b",
+                workingDirectory: "/Users/u"
+            ),
+        ]
+
+        let matches = resolver.matchGhosttySnapshots(snapshots, to: sessions, activeProcesses: [])
+
+        #expect(matches.isEmpty)
+    }
+
+    /// Claude Code titles its tab after the conversation it is running, and that
+    /// title carries the session id. In a standalone Ghostty that is the only
+    /// identity a surface can be recognised by — its environment carries no
+    /// surface id and its scripting dictionary exposes neither a tty nor a
+    /// process — so it has to be used, and it has to outrank the shared working
+    /// directory. Without it the jump bound to whichever of the four same-cwd
+    /// tabs Ghostty happened to list first.
+    @Test
+    func ghosttySessionIDInThePaneTitleBindsThatSurface() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            ghosttySnapshot(sessionID: "SURFACE-agentica", title: "agentica"),
+            ghosttySnapshot(sessionID: "SURFACE-opencode", title: "xuming · Greeting · ses_f4b9bf4c3ffe"),
+            ghosttySnapshot(sessionID: "SURFACE-claude", title: "xuming · hi,g3 · 63a37f5d-4763-41"),
+            ghosttySnapshot(sessionID: "SURFACE-codex", title: "codex"),
+        ]
+        let sessions = [
+            session(
+                id: "63a37f5d-4763-413e-a350-880cc4ad39a2",
+                paneTitle: "xuming · hi,g3",
+                workingDirectory: "/Users/u"
+            ),
+        ]
+
+        let matches = resolver.matchGhosttySnapshots(snapshots, to: sessions, activeProcesses: [])
+
+        #expect(matches["63a37f5d-4763-413e-a350-880cc4ad39a2"]?.sessionID == "SURFACE-claude")
+    }
+
+    /// The same shared-cwd shape, but for a signal the resolver already trusted:
+    /// two tabs report identical titles. Neither tab identifies the session, so
+    /// picking one of them is a coin flip on Ghostty's enumeration order, which
+    /// is what made the mis-targeting look intermittent.
+    @Test
+    func ghosttyAmbiguousTitleDoesNotBindOnItsOwn() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            ghosttySnapshot(sessionID: "SURFACE-A", title: "xuming · repo", workingDirectory: "/other/a"),
+            ghosttySnapshot(sessionID: "SURFACE-B", title: "xuming · repo", workingDirectory: "/other/b"),
+        ]
+        let sessions = [
+            session(id: "s1", paneTitle: "xuming · repo", workingDirectory: "/Users/u"),
+        ]
+
+        let matches = resolver.matchGhosttySnapshots(snapshots, to: sessions, activeProcesses: [])
+
+        #expect(matches.isEmpty)
+    }
+
     /// The session ID is the only exact identity available, so it has to win
     /// over the weaker cwd and title signals. Several agents in one repo share
     /// a working directory, and matching on that first would bind them to
@@ -356,6 +446,55 @@ struct TerminalJumpTargetResolverTests {
         #expect(resolver.matchWeztermFamilySnapshots(snapshots, to: sessions).isEmpty)
     }
 
+    /// Passes are ordered strongest-first across all panes; testing the rules
+    /// pane-major lets a weak pane occupy a session whose strong signal belongs
+    /// to a later pane. Two panes in one repo, and the session is bound by cwd
+    /// as well as by TTY: the TTY must decide.
+    @Test
+    func weztermStrongerSignalBeatsAnEarlierListedPanesWeakSignal() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            TerminalJumpTargetResolver.WeztermFamilySnapshot(
+                paneID: 1, workingDirectory: "/repo", title: "unrelated", ttyName: "/dev/ttys001"
+            ),
+            TerminalJumpTargetResolver.WeztermFamilySnapshot(
+                paneID: 2, workingDirectory: "/elsewhere", title: "unrelated", ttyName: "/dev/ttys009"
+            ),
+        ]
+        let sessions = [
+            session(
+                id: "s1", terminalApp: "WezTerm", paneTitle: "nomatch",
+                workingDirectory: "/repo", terminalTTY: "/dev/ttys009"
+            ),
+        ]
+
+        let matches = resolver.matchWeztermFamilySnapshots(snapshots, to: sessions)
+
+        #expect(matches["s1"]?.paneID == 2)
+    }
+
+    /// Two panes whose titles both mention the session's, with no pane id, TTY
+    /// or cwd to decide between them. Nothing here identifies which pane is the
+    /// session's, so it must keep the target it had rather than be pointed at
+    /// one of two equally plausible panes.
+    @Test
+    func weztermAmbiguousTitleDoesNotBindOnItsOwn() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            TerminalJumpTargetResolver.WeztermFamilySnapshot(
+                paneID: 1, workingDirectory: "/other/a", title: "codex ~/p/repo", ttyName: "/dev/ttys001"
+            ),
+            TerminalJumpTargetResolver.WeztermFamilySnapshot(
+                paneID: 2, workingDirectory: "/other/b", title: "codex ~/p/repo", ttyName: "/dev/ttys002"
+            ),
+        ]
+        let sessions = [
+            session(id: "s1", terminalApp: "WezTerm", paneTitle: "repo", workingDirectory: "/Users/u"),
+        ]
+
+        #expect(resolver.matchWeztermFamilySnapshots(snapshots, to: sessions).isEmpty)
+    }
+
     // MARK: - Terminal.app
 
     /// Within one tab the TTY is checked before the custom title. A substring
@@ -461,6 +600,45 @@ struct TerminalJumpTargetResolverTests {
         ]
         let sessions = [
             session(id: "s1", terminalApp: "Terminal", paneTitle: "agent", terminalTTY: "/dev/ttys005"),
+        ]
+
+        #expect(resolver.matchTerminalSnapshots(snapshots, to: sessions).isEmpty)
+    }
+
+    /// A TTY is an identity and a title is a substring test, so the TTY has to
+    /// decide no matter which tab is listed first. Tabs are enumerated in
+    /// whatever order Terminal.app reports, so testing the two rules per tab
+    /// lets an earlier tab's *title* claim a session whose TTY belongs to a
+    /// later one — the jump then selects a tab running a different agent.
+    @Test
+    func terminalTTYMatchWinsOverAnEarlierListedTabsTitle() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            TerminalJumpTargetResolver.TerminalTabSnapshot(tty: "/dev/ttysOTHER", customTitle: "agent"),
+            TerminalJumpTargetResolver.TerminalTabSnapshot(tty: "/dev/ttys007", customTitle: "unrelated"),
+        ]
+        let sessions = [
+            session(id: "s1", terminalApp: "Terminal", paneTitle: "agent", terminalTTY: "/dev/ttys007"),
+        ]
+
+        let matches = resolver.matchTerminalSnapshots(snapshots, to: sessions)
+
+        #expect(matches["s1"]?.tty == "/dev/ttys007")
+    }
+
+    /// Two tabs whose custom titles both mention the session's, and a session
+    /// carrying neither a TTY nor any other identity: nothing here says which
+    /// tab is its own, so it must keep the target it had rather than be pointed
+    /// at one of two equally plausible tabs.
+    @Test
+    func terminalAmbiguousTitleDoesNotBindOnItsOwn() {
+        let resolver = TerminalJumpTargetResolver()
+        let snapshots = [
+            TerminalJumpTargetResolver.TerminalTabSnapshot(tty: "", customTitle: "claude ~/p/open-island"),
+            TerminalJumpTargetResolver.TerminalTabSnapshot(tty: "", customTitle: "claude ~/p/open-island"),
+        ]
+        let sessions = [
+            session(id: "s1", terminalApp: "Terminal", paneTitle: "open-island"),
         ]
 
         #expect(resolver.matchTerminalSnapshots(snapshots, to: sessions).isEmpty)
