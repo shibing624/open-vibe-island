@@ -17,8 +17,63 @@ struct TerminalJumpServiceTests {
         var values: [String] = []
     }
 
+    private final class ScriptCaptureBox: @unchecked Sendable {
+        var values: [String] = []
+    }
+
+    /// The only part of the Ghostty jump a test can drive: the service hands the
+    /// script to `osascript` and treats the literal "matched" as confirmation
+    /// that the pane was focused. Anything else has to fall through to the
+    /// best-effort message instead of claiming a pane was focused — a Ghostty
+    /// running with no such pane must not be reported as a completed jump.
     @Test
-    func ghosttyJumpScriptActivatesWindowAndRetriesFocusUntilItSticks() {
+    func ghosttyJumpReportsSuccessOnlyWhenTheScriptConfirmsTheTerminal() throws {
+        let scripts = ScriptCaptureBox()
+
+        func service(answering answer: String) -> TerminalJumpService {
+            TerminalJumpService(
+                applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+                appRunningChecker: { _ in true },
+                openAction: { _ in },
+                appleScriptRunner: { script in
+                    scripts.values.append(script)
+                    return answer
+                }
+            )
+        }
+
+        let target = JumpTarget(
+            terminalApp: "Ghostty",
+            workspaceName: "open-island",
+            paneTitle: "codex ~/p/open-island",
+            workingDirectory: "/Users/wangruobing/Personal/open-island",
+            terminalSessionID: "448D7E28-24FB-46F1-9504-C252F97926C1"
+        )
+
+        let focused = try service(answering: "matched").jump(to: target)
+        #expect(focused == "Focused the matching Ghostty terminal.")
+        // The session id is the only exact identity the script can look up, so
+        // it has to be the one that reaches osascript.
+        #expect(scripts.values.last?.contains("448D7E28-24FB-46F1-9504-C252F97926C1") == true)
+
+        let missed = try service(answering: "").jump(to: target)
+        #expect(missed == "Activated Ghostty. Exact pane targeting could not find the live terminal.")
+    }
+
+    /// Every step pinned here happens *inside* the AppleScript that `osascript`
+    /// runs: the window/tab/terminal walk, the retry loop and its delays, and
+    /// the read-back that decides whether focus stuck. None of it can be
+    /// observed from Swift without a live Ghostty, which is what
+    /// `ghosttyJumpIntegrationMatchesFocusedTerminalForLiveSurfaces` covers.
+    ///
+    /// The two ways this script silently stops working are worth pinning
+    /// anyway: dropping the retry loop (focus loses a race with Ghostty's own
+    /// async split update and the jump lands on the previously focused split),
+    /// and walking the wrong container — Ghostty nests terminals inside tabs
+    /// inside windows, and a terminals-of-window walk focuses things the user
+    /// cannot see.
+    @Test
+    func ghosttyJumpScriptWalksWindowsTabsAndTerminalsAndRetriesFocus() {
         let target = JumpTarget(
             terminalApp: "Ghostty",
             workspaceName: "open-island",
@@ -29,24 +84,34 @@ struct TerminalJumpServiceTests {
 
         let script = TerminalJumpService().ghosttyJumpScript(for: target)
 
-        #expect(script.contains("activate"))
+        // The actions that actually move focus, still tied to the declared
+        // constants rather than to copies of their current values, so retuning a
+        // delay does not fail the test while a script that stopped retrying
+        // still does.
         #expect(script.contains("activate window targetWindow"))
         #expect(script.contains("select tab targetTab"))
         #expect(script.contains("focus targetTerminal"))
-        // Tied to the declared constants rather than to copies of their
-        // current values, so retuning a delay does not fail the test while a
-        // script that stopped retrying still does.
         #expect(script.contains("repeat \(TerminalJumpService.ghosttyFocusAttempts) times"))
         #expect(script.contains("delay \(TerminalJumpService.ghosttyWindowActivationDelay)"))
         #expect(script.contains("delay \(TerminalJumpService.ghosttyFocusSettleDelay)"))
+        // The read-back that makes the retry meaningful: without it the loop
+        // would run a fixed number of times and still claim success.
         #expect(script.contains("focused terminal of selected tab of front window"))
         #expect(script.contains("repeat with aWindow in windows"))
         #expect(script.contains("repeat with aTab in tabs of aWindow"))
         #expect(script.contains("repeat with aTerminal in terminals of aTab"))
     }
 
+    /// The id/cwd/title lookup order lives inside the AppleScript, so it cannot
+    /// be observed from Swift — asserting the order would mean asserting the
+    /// script's text. What is worth pinning is that both fallbacks exist and are
+    /// each guarded by the target's own value: an unguarded cwd branch would
+    /// match whichever terminal reports an empty working directory.
+    ///
+    /// This is the residual after the behavioural slice was moved into
+    /// `ghosttyJumpReportsSuccessOnlyWhenTheScriptConfirmsTheTerminal`.
     @Test
-    func ghosttyJumpScriptFallsBackToWorkingDirectoryAndTitle() {
+    func ghosttyJumpScriptGuardsTheWorkingDirectoryAndTitleFallbacks() {
         let target = JumpTarget(
             terminalApp: "Ghostty",
             workspaceName: "open-island",
@@ -58,7 +123,42 @@ struct TerminalJumpServiceTests {
 
         #expect(script.contains("(working directory of aTerminal as text) is \"/Users/wangruobing/Personal/open-island\""))
         #expect(script.contains("(name of aTerminal as text) contains \"codex ~/p/open-island\""))
+        // The guards interpolate the target's values, so with neither a cwd nor
+        // a title the two fallback branches collapse to a dead condition. That
+        // the branch is dead is an AppleScript fact, not one Swift can check.
         #expect(script.contains("if \"\" is \"\" then"))
+    }
+
+    /// A path or title carrying a quote or a backslash must be escaped before it
+    /// is interpolated into the AppleScript literal. An unescaped quote closes
+    /// the string and the script stops compiling — which the jump reports as
+    /// "exact pane targeting could not find the live terminal", so the failure
+    /// looks like a missing pane rather than a malformed script.
+    @Test
+    func ghosttyJumpScriptEscapesQuotesAndBackslashesFromTheTarget() {
+        let target = JumpTarget(
+            terminalApp: "Ghostty",
+            workspaceName: #"we"ird"#,
+            paneTitle: #"say "hi"\now"#,
+            workingDirectory: #"/Users/u/dir "quoted" \ backslash"#,
+            terminalSessionID: #"id "with" quotes"#
+        )
+
+        let script = TerminalJumpService().ghosttyJumpScript(for: target)
+
+        // Asserted with their delimiters so a literal that was closed early by
+        // an unescaped quote fails here rather than matching as a substring.
+        #expect(
+            script.contains(#"is "/Users/u/dir \"quoted\" \\ backslash" then"#)
+        )
+        #expect(
+            script.contains(#"contains "say \"hi\"\\now" then"#)
+        )
+        #expect(
+            script.contains(
+                #"if (id of focused terminal of selected tab of front window as text) is "id \"with\" quotes" then"#
+            )
+        )
     }
 
     @Test
@@ -980,6 +1080,33 @@ struct TerminalJumpServiceTests {
 
     // MARK: - Failure paths
 
+    /// Matches on the case and on the payload the message is built from, so a
+    /// jump that fails for a different reason — or names a different terminal —
+    /// is not accepted as this failure.
+    private func expectUnsupportedTerminal(_ error: (any Error)?, naming terminal: String) {
+        guard case let TerminalJumpError.unsupportedTerminal(named)? = error else {
+            Issue.record("Expected TerminalJumpError.unsupportedTerminal, got \(String(describing: error))")
+            return
+        }
+        #expect(named == terminal)
+    }
+
+    private func expectOpenFailed(_ error: (any Error)?, arguments: [String]) {
+        guard case let TerminalJumpError.openFailed(actual)? = error else {
+            Issue.record("Expected TerminalJumpError.openFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(actual == arguments)
+    }
+
+    private func expectAppleScriptFailed(_ error: (any Error)?, message: String) {
+        guard case let TerminalJumpError.appleScriptFailed(actual)? = error else {
+            Issue.record("Expected TerminalJumpError.appleScriptFailed, got \(String(describing: error))")
+            return
+        }
+        #expect(actual == message)
+    }
+
     /// An unresolvable terminal with no usable cwd has nowhere to land. The
     /// error names the terminal so the message can say which one.
     @Test
@@ -991,7 +1118,7 @@ struct TerminalJumpServiceTests {
             appleScriptRunner: { _ in "" }
         )
 
-        #expect(throws: TerminalJumpError.self) {
+        let error = #expect(throws: TerminalJumpError.self) {
             try service.jump(
                 to: JumpTarget(
                     terminalApp: "Unknown",
@@ -1001,6 +1128,7 @@ struct TerminalJumpServiceTests {
                 )
             )
         }
+        expectUnsupportedTerminal(error, naming: "Unknown")
     }
 
     /// `open` failing is reported rather than swallowed: without this the jump
@@ -1014,7 +1142,7 @@ struct TerminalJumpServiceTests {
             appleScriptRunner: { _ in "" }
         )
 
-        #expect(throws: TerminalJumpError.self) {
+        let error = #expect(throws: TerminalJumpError.self) {
             try service.jump(
                 to: JumpTarget(
                     terminalApp: "Ghostty",
@@ -1024,22 +1152,24 @@ struct TerminalJumpServiceTests {
                 )
             )
         }
+        // The bundle actually asked for, so a jump that failed to open a
+        // different application is not accepted as this failure.
+        expectOpenFailed(error, arguments: ["-b", "com.mitchellh.ghostty"])
     }
 
     /// An AppleScript that fails (Automation consent refused, target app gone)
     /// must surface, not be reported as a completed jump.
     @Test
     func aFailingAppleScriptPropagates() {
+        let refusal = "Not authorised to send Apple events"
         let service = TerminalJumpService(
             applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
             appRunningChecker: { _ in true },
             openAction: { _ in },
-            appleScriptRunner: { _ in
-                throw TerminalJumpError.appleScriptFailed("Not authorised to send Apple events")
-            }
+            appleScriptRunner: { _ in throw TerminalJumpError.appleScriptFailed(refusal) }
         )
 
-        #expect(throws: TerminalJumpError.self) {
+        let error = #expect(throws: TerminalJumpError.self) {
             try service.jump(
                 to: JumpTarget(
                     terminalApp: "iTerm",
@@ -1050,6 +1180,9 @@ struct TerminalJumpServiceTests {
                 )
             )
         }
+        // osascript's own words reach the user, which is the only thing that
+        // tells "consent was refused" apart from "no such pane".
+        expectAppleScriptFailed(error, message: refusal)
     }
 
     /// Every case carries the detail its message needs; an empty description

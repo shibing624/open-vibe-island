@@ -381,7 +381,12 @@ struct TerminalJumpTargetResolver {
 
     // MARK: - Terminal.app matching
 
-    private func matchTerminalSnapshots(
+    /// Internal rather than private so the matching rules can be asserted
+    /// directly. These decide *which* tab a session is bound to, so a wrong
+    /// assignment here is a jump that lands on someone else's Terminal.app
+    /// window — and it cannot be reached through `resolveJumpTargets`, which
+    /// needs a live Terminal.app and AppleScript consent.
+    func matchTerminalSnapshots(
         _ snapshots: [TerminalTabSnapshot],
         to sessions: [AgentSession]
     ) -> [String: TerminalTabSnapshot] {
@@ -440,7 +445,12 @@ struct TerminalJumpTargetResolver {
 
     // MARK: - WezTerm-family matching
 
-    private func matchWeztermFamilySnapshots(
+    /// Internal rather than private so the matching rules can be asserted
+    /// directly. These decide *which* pane a session is bound to, so a wrong
+    /// assignment here is a jump that lands on someone else's WezTerm/Kaku
+    /// pane — and it cannot be reached through `resolveJumpTargets`, which
+    /// needs a live WezTerm/Kaku to answer `cli list`.
+    func matchWeztermFamilySnapshots(
         _ snapshots: [WeztermFamilySnapshot],
         to sessions: [AgentSession]
     ) -> [String: WeztermFamilySnapshot] {
