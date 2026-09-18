@@ -368,11 +368,29 @@ final class AppModel {
 
     var currentSoundTheme: SoundTheme? { EventSoundService.shared.currentTheme }
 
-    /// Rescans the packs directory, e.g. after the user ran the fetch script
-    /// while Open Island was open.
-    func reloadSoundThemes() {
-        EventSoundService.shared.reloadThemes()
-        soundThemeID = EventSoundService.shared.themeID
+    /// Opens a Terminal window to download additional sound packs.
+    ///
+    /// The fetch script installs packs under Application Support, outside the
+    /// app bundle, so they survive updates. After the script finishes the user
+    /// can pick the new theme from the picker above — `soundThemes` is a live
+    /// property, so no rescan is needed.
+    func downloadSoundThemes() {
+        // Walk up from the executable to the repo root. For `swift run` the
+        // executable is at .build/debug/OpenIslandApp; for an installed .app
+        // the script is not bundled, so the command will just print a
+        // "not found" message — the user can cd manually.
+        let executableURL = Bundle.main.executableURL?.deletingLastPathComponent()
+            ?? URL(fileURLWithPath: ".")
+        let repoRoot = executableURL.path.hasSuffix(".build/debug") || executableURL.path.hasSuffix(".build/release")
+            ? executableURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().path
+            : executableURL.path
+        let scriptPath = "\(repoRoot)/scripts/fetch-sound-packs.sh"
+        let command = "clear; echo '=== 下载其他音效主题包 ==='; echo; if [ -f '\(scriptPath)' ]; then sh '\(scriptPath)'; else echo '未找到脚本: \(scriptPath)'; echo '请手动 cd 到仓库根目录后运行: sh scripts/fetch-sound-packs.sh'; fi; echo; echo '完成后回到设置，新主题会出现在下拉列表里。'; echo; read -p '按回车关闭...'"
+        let source = "tell application \"Terminal\" to do script \"\(command)\""
+        let process = Process()
+        process.launchPath = "/usr/bin/osascript"
+        process.arguments = ["-e", source]
+        try? process.run()
     }
 
     func previewSoundCue(_ cue: SoundCue) {

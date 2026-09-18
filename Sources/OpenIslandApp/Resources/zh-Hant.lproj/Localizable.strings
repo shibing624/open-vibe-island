@@ -129,8 +129,7 @@
 "settings.sound.selectSound" = "選擇音效";
 "settings.sound.theme" = "事件音效主題";
 "settings.sound.theme.system" = "系統音（所有事件同一個音）";
-"settings.sound.theme.rescan" = "重新掃描音效包";
-"settings.sound.theme.installHint" = "獸人苦工主題隨應用程式內建。可用 ./scripts/fetch-sound-packs.sh 新增更多。";
+"settings.sound.theme.download" = "下載其他主題音效包";
 "settings.sound.theme.preview" = "依事件試聽";
 "settings.sound.theme.borrowed" = "這個包沒有這一類的音，借用了包內其他音。";
 "settings.sound.theme.info" = "音效包資訊";
