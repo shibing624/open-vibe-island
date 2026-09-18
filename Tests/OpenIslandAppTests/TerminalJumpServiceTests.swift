@@ -886,6 +886,25 @@ struct TerminalJumpServiceTests {
 
     // MARK: - tmux command sequence
 
+    /// A socket path longer than `sun_path` holds must fail this jump, not the
+    /// process. `sun_path` is 104 bytes on macOS and the path comes from a file
+    /// cmux writes (`/tmp/cmux-last-socket-path`), so it is not ours to trust.
+    /// The guard that handles it replaced a `precondition`, which traps in
+    /// release builds too — an over-long path used to take down the whole app
+    /// rather than failing one jump.
+    @Test
+    func anOverlongCmuxSocketPathFailsTheJumpInsteadOfTrapping() {
+        let overlongPath = "/tmp/" + String(repeating: "a", count: 200) + ".sock"
+        #expect(overlongPath.utf8CString.count > MemoryLayout<sockaddr_un>.size)
+
+        #expect(
+            !TerminalJumpService.focusCmuxSurface(
+                surfaceID: "4FB58912-B60B-49EB-A1BD-A5C42A7536C4",
+                socketPath: overlongPath
+            )
+        )
+    }
+
     /// tmux moves a client between sessions with `switch-client`. When that
     /// fails the client never left the session it was on, so `select-window`
     /// and `select-pane` would rearrange a session nobody is watching and the
