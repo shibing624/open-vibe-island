@@ -1741,6 +1741,154 @@ struct SessionStateTests {
         #expect(state.session(id: "s-1")?.firstSeenAt == t0)
     }
 
+    /// A hook that arrives after the session ended must not report the agent
+    /// as running again. Every per-tool hook (preToolUse, postToolUse,
+    /// userPromptSubmit) emits `.running`, so without a guard in the reducer a
+    /// single late event puts an exited agent back in the running state.
+    @Test
+    func lateRunningActivityDoesNotResurrectAnEndedSession() {
+        let t0 = Date(timeIntervalSince1970: 30_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "ended-1",
+            title: "Repo",
+            tool: .claudeCode,
+            origin: .live,
+            summary: "Working",
+            timestamp: t0
+        )))
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "ended-1",
+            summary: "Done",
+            timestamp: t0.addingTimeInterval(10),
+            isSessionEnd: true
+        )))
+        #expect(state.session(id: "ended-1")?.isSessionEnded == true)
+
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "ended-1",
+            summary: "read_file a.py",
+            phase: .running,
+            timestamp: t0.addingTimeInterval(20)
+        )))
+
+        // The phase must still describe an ended run, and the summary must not
+        // have been overwritten by the stale tool activity.
+        #expect(state.session(id: "ended-1")?.phase == .completed)
+        #expect(state.session(id: "ended-1")?.summary == "Done")
+        #expect(state.session(id: "ended-1")?.isSessionEnded == true)
+        // The event is still recorded as observed, so liveness ageing keeps working.
+        #expect(state.session(id: "ended-1")?.updatedAt == t0.addingTimeInterval(20))
+    }
+
+    /// The guard above is scoped to `.running` only. A late event that agrees
+    /// the run is over must still land, otherwise a terminal summary would be
+    /// dropped.
+    @Test
+    func lateCompletedActivityStillLandsOnAnEndedSession() {
+        let t0 = Date(timeIntervalSince1970: 31_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "ended-2",
+            title: "Repo",
+            tool: .claudeCode,
+            origin: .live,
+            summary: "Working",
+            timestamp: t0
+        )))
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "ended-2",
+            summary: "Done",
+            timestamp: t0.addingTimeInterval(10),
+            isSessionEnd: true
+        )))
+
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "ended-2",
+            summary: "Finished: refactor the parser",
+            phase: .completed,
+            timestamp: t0.addingTimeInterval(20)
+        )))
+
+        #expect(state.session(id: "ended-2")?.summary == "Finished: refactor the parser")
+        #expect(state.session(id: "ended-2")?.phase == .completed)
+    }
+
+    /// Reusing a session id (`claude --resume`, a re-run in the same shell) is a
+    /// legitimate restart and goes through `.sessionStarted`, which clears the
+    /// ended flag. The guard must not strand such a session.
+    @Test
+    func sessionStartedStillRevivesAnEndedSessionID() {
+        let t0 = Date(timeIntervalSince1970: 32_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "reused-1",
+            title: "Repo",
+            tool: .claudeCode,
+            origin: .live,
+            summary: "Working",
+            timestamp: t0
+        )))
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "reused-1",
+            summary: "Done",
+            timestamp: t0.addingTimeInterval(10),
+            isSessionEnd: true
+        )))
+
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "reused-1",
+            title: "Repo",
+            tool: .claudeCode,
+            origin: .live,
+            summary: "Starting again",
+            timestamp: t0.addingTimeInterval(20)
+        )))
+        #expect(state.session(id: "reused-1")?.isSessionEnded == false)
+
+        // And activity flows again on the new run.
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "reused-1",
+            summary: "read_file b.py",
+            phase: .running,
+            timestamp: t0.addingTimeInterval(30)
+        )))
+        #expect(state.session(id: "reused-1")?.phase == .running)
+        #expect(state.session(id: "reused-1")?.summary == "read_file b.py")
+    }
+
+    /// A turn that finished (`Stop`) without the session ending is a different
+    /// state from an ended session: the CLI is still alive and waiting, so the
+    /// next prompt must be able to drive it back to running.
+    @Test
+    func runningActivityStillResumesACompletedButLiveSession() {
+        let t0 = Date(timeIntervalSince1970: 33_000)
+        var state = SessionState()
+        state.apply(.sessionStarted(SessionStarted(
+            sessionID: "live-1",
+            title: "Repo",
+            tool: .claudeCode,
+            origin: .live,
+            summary: "Working",
+            timestamp: t0
+        )))
+        // Turn-level completion: no isSessionEnd, so the session stays live.
+        state.apply(.sessionCompleted(SessionCompleted(
+            sessionID: "live-1",
+            summary: "Answered",
+            timestamp: t0.addingTimeInterval(10)
+        )))
+        #expect(state.session(id: "live-1")?.isSessionEnded == false)
+
+        state.apply(.activityUpdated(SessionActivityUpdated(
+            sessionID: "live-1",
+            summary: "read_file c.py",
+            phase: .running,
+            timestamp: t0.addingTimeInterval(20)
+        )))
+        #expect(state.session(id: "live-1")?.phase == .running)
+    }
+
     @Test
     func firstSeenAtPersistsThroughRegistryRoundTrip() throws {
         let t0 = Date(timeIntervalSince1970: 20_000)

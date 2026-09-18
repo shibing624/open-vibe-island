@@ -97,7 +97,6 @@ public final class BridgeServer: @unchecked Sendable {
     /// Tracks the portion of each live Claude transcript already inspected for
     /// terminal background-agent task notifications.
     private var claudeTranscriptCursors: [String: ClaudeTranscriptCursor] = [:]
-    private var stateSnapshot = SessionState()
     /// Local working state: tracks sessions emitted by this server between
     /// snapshot pushes from AppModel. This is NOT a duplicate of AppModel's
     /// state — it only contains sessions created via bridge hooks and is
@@ -196,7 +195,6 @@ public final class BridgeServer: @unchecked Sendable {
     /// can read session data without maintaining its own copy.
     public func updateStateSnapshot(_ snapshot: SessionState) {
         queue.async { [self] in
-            stateSnapshot = snapshot
             localState = snapshot
         }
     }
@@ -3586,7 +3584,7 @@ public final class BridgeServer: @unchecked Sendable {
     }
 
     private func hasSession(id: String) -> Bool {
-        localState.session(id: id) != nil || localState.session(id: id) != nil
+        localState.session(id: id) != nil
     }
 
     private func send(_ envelope: BridgeEnvelope, to clientID: UUID) {
