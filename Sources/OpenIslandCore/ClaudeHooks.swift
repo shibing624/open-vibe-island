@@ -1047,13 +1047,16 @@ public extension ClaudeHookPayload {
             // cmux/Zellij session IDs come from environment variables;
             // no AppleScript locator is available, so skip entirely.
             useLocator = false
-        } else if let terminalApp = payload.terminalApp, isGhosttyTerminalApp(terminalApp) {
-            // Ghostty's AppleScript returns the *focused* terminal which is
-            // only reliable when the user just interacted with the terminal.
-            // SessionStart and UserPromptSubmit are safe because the user's
-            // terminal is guaranteed to be focused at those moments.  Later
-            // hooks (tool use, etc.) may fire after the user switched tabs,
-            // so clear stale values and skip the locator.
+        } else if let terminalApp = payload.terminalApp, locatorAnswersWithTheFocusedWindow(terminalApp) {
+            // This locator names only the *focused* terminal (Ghostty's focused
+            // terminal, iTerm's current session of the current window), which is
+            // reliable only when the user just interacted with the terminal that
+            // owns this session. SessionStart and UserPromptSubmit are safe
+            // because that terminal is the focused one at those moments. Later
+            // hooks (tool use, etc.) may fire after the user switched tabs, and
+            // asking then stamps whichever session is frontmost onto this one —
+            // so the stale values are cleared instead, and the TTY captured
+            // above keeps addressing the right pane.
             if payload.hookEventName == .sessionStart || payload.hookEventName == .userPromptSubmit {
                 useLocator = true
             } else {
@@ -1096,9 +1099,21 @@ public extension ClaudeHookPayload {
         return !Self.noLocatorTerminalApps.contains(lower)
     }
 
-    private func isGhosttyTerminalApp(_ terminalApp: String?) -> Bool {
-        guard let app = terminalApp?.lowercased() else { return false }
-        return app.contains("ghostty")
+    /// Terminals whose AppleScript locator answers with whichever window or tab
+    /// is frontmost instead of the one the agent runs in.
+    ///
+    /// It is exactly the three `terminalLocator(for:)` implements with a
+    /// focus-scoped query: Ghostty's `focused terminal of selected tab of front
+    /// window`, iTerm's `current session of current window`, and Terminal's
+    /// `selected tab of front window`. Asking any of them after the user has
+    /// moved to another tab stamps that tab's identity onto this session, which
+    /// points its jump at a different agent's conversation.
+    private static let focusScopedLocatorTerminalApps: Set<String> = [
+        "ghostty", "iterm", "terminal",
+    ]
+
+    private func locatorAnswersWithTheFocusedWindow(_ terminalApp: String) -> Bool {
+        Self.focusScopedLocatorTerminalApps.contains(terminalApp.lowercased())
     }
 
     private func isCmuxTerminalApp(_ terminalApp: String?) -> Bool {
