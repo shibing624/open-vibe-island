@@ -183,6 +183,19 @@ Rules the app enforces:
 | `Sources/OpenIslandApp/SoundPacks/peon/` | the bundled pack: audio plus manifest |
 
 Sound cue selection is pure logic and lives in Core because its failure mode is
-invisible — a cue that never fires, or one that fires on every tool call. Tests
-are in `Tests/OpenIslandCoreTests/SoundThemeTests.swift` and
-`SoundCueRouterTests.swift`.
+invisible — a cue that never fires, or one that fires on every tool call.
+
+## Tests
+
+The suite is deliberately silent. It runs hundreds of times a day, and a test
+that makes noise is a test people stop running, so no test may reach playback.
+
+That is a constraint on new tests, not just a note about old ones, because the
+app layer is what reaches `EventSoundService`: `AppModel` and
+`OverlayUICoordinator` call it on the way to presenting a notification surface.
+So a test that feeds a bridge event into a real `AppModel` plays the bundled
+pack — the cue rides along with the card.
+
+What is safe is the pure part: parse the manifest and resolve audio URLs
+directly, the way `BundledSoundThemeTests` does. That covers loading and
+selection without touching playback.
