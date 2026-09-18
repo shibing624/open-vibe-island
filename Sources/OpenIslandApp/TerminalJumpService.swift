@@ -208,9 +208,9 @@ struct TerminalJumpService {
     /// `vscodeFamilyCLI` so the two maps cannot drift.
     private static let vscodeFamilyBundleIDs: Set<String> = Set(vscodeFamilyCLI.keys)
 
-    private static let ghosttyFocusSettleDelay = 0.08
-    private static let ghosttyWindowActivationDelay = 0.04
-    private static let ghosttyFocusAttempts = 3
+    static let ghosttyFocusSettleDelay = 0.08
+    static let ghosttyWindowActivationDelay = 0.04
+    static let ghosttyFocusAttempts = 3
 
     /// Deadline for one `osascript` invocation. The window-walking scripts
     /// finish in tens of milliseconds; anything near this bound means osascript

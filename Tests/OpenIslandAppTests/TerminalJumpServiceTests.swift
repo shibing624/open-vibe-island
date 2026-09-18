@@ -33,9 +33,12 @@ struct TerminalJumpServiceTests {
         #expect(script.contains("activate window targetWindow"))
         #expect(script.contains("select tab targetTab"))
         #expect(script.contains("focus targetTerminal"))
-        #expect(script.contains("repeat 3 times"))
-        #expect(script.contains("delay 0.04"))
-        #expect(script.contains("delay 0.08"))
+        // Tied to the declared constants rather than to copies of their
+        // current values, so retuning a delay does not fail the test while a
+        // script that stopped retrying still does.
+        #expect(script.contains("repeat \(TerminalJumpService.ghosttyFocusAttempts) times"))
+        #expect(script.contains("delay \(TerminalJumpService.ghosttyWindowActivationDelay)"))
+        #expect(script.contains("delay \(TerminalJumpService.ghosttyFocusSettleDelay)"))
         #expect(script.contains("focused terminal of selected tab of front window"))
         #expect(script.contains("repeat with aWindow in windows"))
         #expect(script.contains("repeat with aTab in tabs of aWindow"))
@@ -973,6 +976,95 @@ struct TerminalJumpServiceTests {
             )
         }
         #expect(openedArguments.values.isEmpty)
+    }
+
+    // MARK: - Failure paths
+
+    /// An unresolvable terminal with no usable cwd has nowhere to land. The
+    /// error names the terminal so the message can say which one.
+    @Test
+    func unresolvableTerminalWithoutAWorkingDirectoryThrows() {
+        let service = TerminalJumpService(
+            applicationResolver: { _ in nil },
+            appRunningChecker: { _ in false },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" }
+        )
+
+        #expect(throws: TerminalJumpError.self) {
+            try service.jump(
+                to: JumpTarget(
+                    terminalApp: "Unknown",
+                    workspaceName: "repo",
+                    paneTitle: "agent",
+                    workingDirectory: "/definitely/not/a/real/path"
+                )
+            )
+        }
+    }
+
+    /// `open` failing is reported rather than swallowed: without this the jump
+    /// returns a success string for a window that never came forward.
+    @Test
+    func aFailingOpenPropagates() {
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+            appRunningChecker: { _ in false },
+            openAction: { arguments in throw TerminalJumpError.openFailed(arguments) },
+            appleScriptRunner: { _ in "" }
+        )
+
+        #expect(throws: TerminalJumpError.self) {
+            try service.jump(
+                to: JumpTarget(
+                    terminalApp: "Ghostty",
+                    workspaceName: "repo",
+                    paneTitle: "agent",
+                    workingDirectory: "/definitely/not/a/real/path"
+                )
+            )
+        }
+    }
+
+    /// An AppleScript that fails (Automation consent refused, target app gone)
+    /// must surface, not be reported as a completed jump.
+    @Test
+    func aFailingAppleScriptPropagates() {
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { _ in
+                throw TerminalJumpError.appleScriptFailed("Not authorised to send Apple events")
+            }
+        )
+
+        #expect(throws: TerminalJumpError.self) {
+            try service.jump(
+                to: JumpTarget(
+                    terminalApp: "iTerm",
+                    workspaceName: "repo",
+                    paneTitle: "agent",
+                    workingDirectory: "/definitely/not/a/real/path",
+                    terminalSessionID: "w0t0p0"
+                )
+            )
+        }
+    }
+
+    /// Every case carries the detail its message needs; an empty description
+    /// would leave the user with "Jump failed: ".
+    @Test
+    func everyJumpErrorDescribesItself() {
+        let errors: [TerminalJumpError] = [
+            .unsupportedTerminal("Zellij"),
+            .openFailed(["-b", "com.mitchellh.ghostty"]),
+            .appleScriptFailed("osascript said no"),
+        ]
+
+        for error in errors {
+            #expect(!(error.errorDescription ?? "").isEmpty)
+        }
     }
 }
 

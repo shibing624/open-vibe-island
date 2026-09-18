@@ -135,7 +135,12 @@ struct TerminalJumpTargetResolver {
 
     // MARK: - Ghostty matching
 
-    private func matchGhosttySnapshots(
+    /// Internal rather than private so the matching rules can be asserted
+    /// directly. These decide *which* pane a session is bound to, so a wrong
+    /// assignment here is a jump that lands on someone else's terminal — and
+    /// it cannot be reached through `resolveJumpTargets`, which needs a live
+    /// Ghostty and AppleScript consent.
+    func matchGhosttySnapshots(
         _ snapshots: [GhosttyTerminalSnapshot],
         to sessions: [AgentSession],
         activeProcesses: [ActiveProcessSnapshot]
@@ -231,37 +236,41 @@ struct TerminalJumpTargetResolver {
 
     // MARK: - Tmux matching
 
-    private func matchTmuxSnapshots(
+    func matchTmuxSnapshots(
         _ snapshots: [TmuxPaneSnapshot],
         to sessions: [AgentSession]
     ) -> [String: TmuxPaneSnapshot] {
         var assignments: [String: TmuxPaneSnapshot] = [:]
+        var claimedPaneIDs: Set<String> = []
 
-        for snapshot in snapshots {
-            // TTY match
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.terminalTTY) == snapshot.tty
-            }) {
-                assignments[session.id] = snapshot
-                continue
-            }
+        // Strongest signal first across *all* panes, the way the Ghostty
+        // matcher does it. Iterating pane-major and trying all three rules per
+        // pane let a weak title match on an earlier pane consume a session
+        // whose exact TTY belonged to a later one: two panes both titled
+        // "agent", and the session pinned to the second by TTY got bound to
+        // the first. TTY and pane id are identities; a title is a substring
+        // test and must never outrank them.
+        let rules: [(TmuxPaneSnapshot, AgentSession) -> Bool] = [
+            { snapshot, session in
+                nonEmptyValue(session.jumpTarget?.terminalTTY).map { $0 == snapshot.tty } == true
+            },
+            { snapshot, session in
+                nonEmptyValue(session.jumpTarget?.tmuxTarget).map { $0 == snapshot.paneID } == true
+            },
+            { snapshot, session in
+                nonEmptyValue(session.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
+            },
+        ]
 
-            // Pane ID match (tmuxTarget)
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.tmuxTarget) == snapshot.paneID
-            }) {
+        for rule in rules {
+            for snapshot in snapshots where !claimedPaneIDs.contains(snapshot.paneID) {
+                guard let session = sessions.first(where: {
+                    assignments[$0.id] == nil && rule(snapshot, $0)
+                }) else {
+                    continue
+                }
                 assignments[session.id] = snapshot
-                continue
-            }
-
-            // Title match
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
-            }) {
-                assignments[session.id] = snapshot
+                claimedPaneIDs.insert(snapshot.paneID)
             }
         }
 
