@@ -22,6 +22,12 @@ struct TerminalJumpService {
     /// it. nil means "run the real tmux commands"; tests inject a stub so they
     /// can exercise the tmux branch without driving a live tmux server.
     typealias TmuxPaneSelector = @Sendable (JumpTarget) -> Bool
+    /// Runs one tmux command, returning its stdout or nil when tmux rejected
+    /// it. Injected so the switch-client/select-window/select-pane sequence can
+    /// be asserted — including each failure point — without a live tmux server.
+    /// `TmuxPaneSelector` stubs the whole pane jump; this stubs one command,
+    /// which is what the ordering and abort behaviour need.
+    typealias TmuxCommandRunner = @Sendable (_ socketArgs: [String], _ args: [String]) -> String?
 
     private struct TerminalAppDescriptor {
         let displayName: String
@@ -202,10 +208,6 @@ struct TerminalJumpService {
     /// `vscodeFamilyCLI` so the two maps cannot drift.
     private static let vscodeFamilyBundleIDs: Set<String> = Set(vscodeFamilyCLI.keys)
 
-    /// Bundle identifiers of terminal emulators that commonly host Zellij,
-    /// derived from `knownApps` so it stays in sync automatically.
-    private static let zellijParentTerminals = knownApps.map(\.bundleIdentifier)
-
     private static let ghosttyFocusSettleDelay = 0.08
     private static let ghosttyWindowActivationDelay = 0.04
     private static let ghosttyFocusAttempts = 3
@@ -240,6 +242,7 @@ struct TerminalJumpService {
     private let warpFrontmostChecker: WarpFrontmostChecker
     private let cmuxSurfaceFocuser: CmuxSurfaceFocuser
     private let tmuxPaneSelector: TmuxPaneSelector?
+    private let tmuxCommandRunner: TmuxCommandRunner?
 
     init(
         applicationResolver: @escaping ApplicationResolver = { bundleIdentifier in
@@ -265,7 +268,8 @@ struct TerminalJumpService {
             guard let socketPath = Self.resolveCmuxSocketPath() else { return false }
             return Self.focusCmuxSurface(surfaceID: surfaceID, socketPath: socketPath)
         },
-        tmuxPaneSelector: TmuxPaneSelector? = nil
+        tmuxPaneSelector: TmuxPaneSelector? = nil,
+        tmuxCommandRunner: TmuxCommandRunner? = nil
     ) {
         self.applicationResolver = applicationResolver
         self.appRunningChecker = appRunningChecker
@@ -278,6 +282,7 @@ struct TerminalJumpService {
         self.warpFrontmostChecker = warpFrontmostChecker
         self.cmuxSurfaceFocuser = cmuxSurfaceFocuser
         self.tmuxPaneSelector = tmuxPaneSelector
+        self.tmuxCommandRunner = tmuxCommandRunner
     }
 
     func jump(to target: JumpTarget) throws -> String {
@@ -366,12 +371,13 @@ struct TerminalJumpService {
             if jumpToZellijPane(target) {
                 return "Focused the matching Zellij pane."
             }
-            // Fallback: activate whichever parent terminal is running.
-            if let parentBundleID = Self.zellijParentTerminals.first(where: { appRunningChecker($0) }) {
-                try openAction(["-b", parentBundleID])
-                return "Activated parent terminal. Zellij pane targeting could not find the pane."
-            }
-            throw TerminalJumpError.unsupportedTerminal("Zellij (no parent terminal found)")
+            // No guessing at the host: which emulator draws this Zellij session
+            // is not implied by which emulator happens to be running. The old
+            // fallback activated the first running entry of `knownApps`, which
+            // is ordered, so a Zellij session in Ghostty raised iTerm whenever
+            // iTerm was open. Failing here is honest and reaches the Finder-cwd
+            // fallback that jump() applies to unresolvable hosts.
+            throw TerminalJumpError.unsupportedTerminal("Zellij (could not locate the pane)")
         }
 
         if let descriptor {
@@ -675,8 +681,18 @@ struct TerminalJumpService {
             return false
         }
 
-        guard let tmuxPath = resolveTmuxPath() else {
-            return false
+        // With a runner injected, tmux does not have to be installed: the
+        // sequence under test is the command order, not the binary lookup.
+        let runTmux: (_ socketArgs: [String], _ args: [String]) -> String?
+        if let tmuxCommandRunner {
+            runTmux = { tmuxCommandRunner($0, $1) }
+        } else {
+            guard let tmuxPath = resolveTmuxPath() else {
+                return false
+            }
+            runTmux = { [self] socketArgs, args in
+                runTmuxCommand(tmuxPath: tmuxPath, socketArgs: socketArgs, args: args)
+            }
         }
 
         // tmuxTarget is "session:window.pane" (e.g. "oss-contributions:3.0")
@@ -708,12 +724,23 @@ struct TerminalJumpService {
 
         // Find the client TTY (and the session it is already attached to) so we
         // can explicitly target it with switch-client.
-        let clientLine = runTmuxCommand(tmuxPath: tmuxPath, socketArgs: socketArgs(),
-                                        args: ["list-clients", "-F", "#{client_tty}\t#{client_session}"])?
-            .components(separatedBy: "\n").first { !$0.isEmpty }
-        let clientFields = clientLine?.components(separatedBy: "\t") ?? []
-        let clientTTY = clientFields.first.flatMap { $0.isEmpty ? nil : $0 }
-        let clientSession = clientFields.count > 1 ? clientFields[1] : nil
+        //
+        // A client already attached to the target session is preferred over
+        // whichever client tmux happens to list first: with several clients on
+        // one server (a terminal window plus `tmux -CC`, or an ssh client) the
+        // first line is an arbitrary one, and switching it would move a client
+        // the user was not looking at while leaving the right one behind.
+        let clientLines = runTmux(socketArgs(),
+                                  ["list-clients", "-F", "#{client_tty}\t#{client_session}"])?
+            .components(separatedBy: "\n").filter { !$0.isEmpty } ?? []
+        let clients: [(tty: String, session: String?)] = clientLines.compactMap { line in
+            let fields = line.components(separatedBy: "\t")
+            guard let tty = fields.first, !tty.isEmpty else { return nil }
+            return (tty, fields.count > 1 ? fields[1] : nil)
+        }
+        let selectedClient = clients.first { $0.session == sessionName } ?? clients.first
+        let clientTTY = selectedClient?.tty
+        let clientSession = selectedClient?.session
 
         // Step 1: switch-client — point the client at the target session.
         // Skip it when the client is already attached to that session: a
@@ -721,20 +748,27 @@ struct TerminalJumpService {
         // (e.g. iTerm2's tmux integration, `tmux -CC`) re-attach and rebuild
         // every native window, which loses window placement/fullscreen.
         // select-window / select-pane below are enough in that case.
-        if let clientTTY = clientTTY, clientSession != sessionName {
-            _ = runTmuxCommand(tmuxPath: tmuxPath, socketArgs: socketArgs(),
-                               args: ["switch-client", "-c", clientTTY, "-t", sessionName])
+        //
+        // A failing switch-client means the client never moved to the target
+        // session — a tty that went stale between list-clients and here, or a
+        // client that detached. Continuing would still run select-window and
+        // select-pane, which mutate a session nobody is watching, and the jump
+        // would then be reported as a completed focus. Stop instead and let the
+        // caller fall back to activating the app.
+        if let clientTTY, clientSession != sessionName {
+            guard runTmux(socketArgs(),
+                          ["switch-client", "-c", clientTTY, "-t", sessionName]) != nil else {
+                return false
+            }
         }
 
         // Step 2: select-window — switch to the correct window.
-        _ = runTmuxCommand(tmuxPath: tmuxPath, socketArgs: socketArgs(),
-                           args: ["select-window", "-t", sessionWindow])
+        guard runTmux(socketArgs(), ["select-window", "-t", sessionWindow]) != nil else {
+            return false
+        }
 
         // Step 3: select-pane — focus the exact pane.
-        let spResult = runTmuxCommand(tmuxPath: tmuxPath, socketArgs: socketArgs(),
-                                      args: ["select-pane", "-t", tmuxTarget])
-
-        return spResult != nil
+        return runTmux(socketArgs(), ["select-pane", "-t", tmuxTarget]) != nil
     }
 
     /// Run a tmux command and return its stdout (nil on failure).
@@ -830,11 +864,10 @@ struct TerminalJumpService {
         guard (try? goToTab.run()) != nil else { return false }
         goToTab.waitUntilExit()
 
-        // Activate the parent terminal app window.
-        if let parentBundleID = Self.zellijParentTerminals.first(where: { appRunningChecker($0) }) {
-            try? openAction(["-b", parentBundleID])
-        }
-
+        // The host emulator is deliberately not activated here: see the note in
+        // jump(). Zellij switched its own tab, which is the part we can do
+        // correctly; raising a guessed window on top of it is what moved focus
+        // to the wrong terminal.
         return goToTab.terminationStatus == 0
     }
 
@@ -1295,13 +1328,19 @@ struct TerminalJumpService {
             return nil
         }
 
-        if let exact = Self.knownApps.first(where: { descriptor in
+        // Only an actual name match resolves. A name we do not know is not a
+        // reason to activate some other terminal: "whichever known app happens
+        // to be installed" is unrelated to where the session lives, and since
+        // knownApps is ordered it resolved to iTerm on most machines. The hook
+        // layer does emit unmapped names — `HookTerminalContext` falls back to
+        // the bare string "JetBrains" for any JetBrains IDE it cannot pin down
+        // — so this path was reachable, not theoretical.
+        //
+        // nil sends jump() to the same Finder-cwd fallback as "unknown", which
+        // at least lands the user in the right project.
+        return Self.knownApps.first { descriptor in
             descriptor.displayName.lowercased() == normalized || descriptor.aliases.contains(normalized)
-        }) {
-            return exact
         }
-
-        return Self.knownApps.first(where: isInstalled(descriptor:))
     }
 
     private func normalizeTerminalAppName(_ preferredName: String) -> String {

@@ -780,6 +780,204 @@ struct TerminalJumpServiceTests {
         #expect(processInvocations.values.first?.0 == "trae")
         #expect(processInvocations.values.first?.1 == ["-r", "/Users/test/open-vibe-island"])
     }
+
+    // MARK: - tmux command sequence
+
+    /// tmux moves a client between sessions with `switch-client`. When that
+    /// fails the client never left the session it was on, so `select-window`
+    /// and `select-pane` would rearrange a session nobody is watching and the
+    /// jump would still be reported as a focus. The sequence has to stop.
+    @Test
+    func tmuxJumpStopsWhenSwitchClientFails() throws {
+        let invocations = TmuxInvocationBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" },
+            tmuxCommandRunner: { _, args in
+                invocations.values.append(args)
+                if args.first == "list-clients" { return "/dev/ttys004\tother-session" }
+                if args.first == "switch-client" { return nil }
+                return ""
+            }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "open-island",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/open-island",
+                tmuxTarget: "oss:3.0"
+            )
+        )
+
+        // Nothing may run after the failed switch-client.
+        #expect(invocations.values.map(\.first) == ["list-clients", "switch-client"])
+        #expect(!result.contains("Focused the matching tmux pane"))
+    }
+
+    /// With several clients attached, the one already on the target session is
+    /// the user's window onto that session. Taking whichever client tmux lists
+    /// first would switch an unrelated client away from what it was showing.
+    @Test
+    func tmuxJumpPrefersTheClientAlreadyOnTheTargetSession() throws {
+        let invocations = TmuxInvocationBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "matched" },
+            tmuxCommandRunner: { _, args in
+                invocations.values.append(args)
+                if args.first == "list-clients" {
+                    return "/dev/ttys004\tunrelated\n/dev/ttys009\toss"
+                }
+                return ""
+            }
+        )
+
+        _ = try service.jump(
+            to: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "open-island",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/open-island",
+                tmuxTarget: "oss:3.0"
+            )
+        )
+
+        // The chosen client is already on "oss", so no switch-client at all —
+        // and critically not one aimed at /dev/ttys004.
+        #expect(!invocations.values.contains { $0.first == "switch-client" })
+        #expect(invocations.values.map(\.first) == ["list-clients", "select-window", "select-pane"])
+    }
+
+    /// The window/pane addresses are derived from "session:window.pane", and
+    /// getting that split wrong silently targets the wrong pane.
+    @Test
+    func tmuxJumpAddressesTheWindowAndPaneItWasGiven() throws {
+        let invocations = TmuxInvocationBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "matched" },
+            tmuxCommandRunner: { _, args in
+                invocations.values.append(args)
+                if args.first == "list-clients" { return "/dev/ttys004\toss" }
+                return ""
+            }
+        )
+
+        _ = try service.jump(
+            to: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "open-island",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/open-island",
+                tmuxTarget: "oss:3.0"
+            )
+        )
+
+        #expect(invocations.values.contains(["select-window", "-t", "oss:3"]))
+        #expect(invocations.values.contains(["select-pane", "-t", "oss:3.0"]))
+    }
+
+    /// A failing select-window means the target window was never brought
+    /// forward, so the pane selection underneath it is not a completed jump.
+    @Test
+    func tmuxJumpStopsWhenSelectWindowFails() throws {
+        let invocations = TmuxInvocationBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Ghostty.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { _ in "" },
+            tmuxCommandRunner: { _, args in
+                invocations.values.append(args)
+                if args.first == "list-clients" { return "/dev/ttys004\toss" }
+                if args.first == "select-window" { return nil }
+                return ""
+            }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "Ghostty",
+                workspaceName: "open-island",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/open-island",
+                tmuxTarget: "oss:3.0"
+            )
+        )
+
+        #expect(!invocations.values.contains { $0.first == "select-pane" })
+        #expect(!result.contains("Focused the matching tmux pane"))
+    }
+
+    // MARK: - No guessing at an unresolvable host
+
+    /// `HookTerminalContext` emits the bare string "JetBrains" when it cannot
+    /// pin down which JetBrains IDE is hosting the session. That name matches
+    /// no descriptor, and the old fallback then activated the first *installed*
+    /// entry of the ordered `knownApps` list — iTerm on most machines.
+    @Test
+    func unmappedTerminalNameDoesNotActivateAnUnrelatedTerminal() throws {
+        let openedArguments = OpenedArgumentsBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
+            appRunningChecker: { _ in true },
+            openAction: { arguments in openedArguments.values.append(arguments) },
+            appleScriptRunner: { _ in "" }
+        )
+
+        let result = try service.jump(
+            to: JumpTarget(
+                terminalApp: "JetBrains",
+                workspaceName: "open-island",
+                paneTitle: "agent",
+                workingDirectory: FileManager.default.temporaryDirectory.path
+            )
+        )
+
+        // The cwd is opened in Finder; no terminal bundle is activated.
+        #expect(!openedArguments.values.contains { $0.contains("-b") })
+        #expect(result.contains("Finder"))
+    }
+
+    /// Which emulator draws a Zellij session is not implied by which emulator
+    /// is running. Activating the first running known app raised iTerm for a
+    /// Zellij session living in Ghostty.
+    @Test
+    func zellijJumpDoesNotActivateAGuessedParentTerminal() {
+        let openedArguments = OpenedArgumentsBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
+            appRunningChecker: { _ in true },
+            openAction: { arguments in openedArguments.values.append(arguments) },
+            appleScriptRunner: { _ in "" }
+        )
+
+        // No terminalSessionID, so the pane cannot be located and the old code
+        // took the parent-terminal fallback.
+        #expect(throws: (any Error).self) {
+            try service.jump(
+                to: JumpTarget(
+                    terminalApp: "Zellij",
+                    workspaceName: "open-island",
+                    paneTitle: "agent",
+                    workingDirectory: "/Users/u/open-island"
+                )
+            )
+        }
+        #expect(openedArguments.values.isEmpty)
+    }
+}
+
+final class TmuxInvocationBox: @unchecked Sendable {
+    var values: [[String]] = []
 }
 
 final class ReadSequenceBox: @unchecked Sendable {
