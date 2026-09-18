@@ -24,7 +24,7 @@ The App stores minimal preferences (e.g., notification settings, pairing token) 
 ### Contact
 
 If you have any questions about this privacy policy, please open an issue at:
-https://github.com/Octane0411/open-vibe-island/issues
+https://github.com/shibing624/open-vibe-island/issues
 
 ---
 
@@ -50,4 +50,4 @@ Open Island（"本应用"）是一款 AI 编程助手的配套应用。我们致
 ### 联系方式
 
 如果您对本隐私政策有任何疑问，请在以下地址提交 issue：
-https://github.com/Octane0411/open-vibe-island/issues
+https://github.com/shibing624/open-vibe-island/issues

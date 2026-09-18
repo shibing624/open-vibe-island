@@ -2,7 +2,7 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
     <channel>
         <title>Open Island Updates</title>
-        <link>https://github.com/Octane0411/open-vibe-island/releases</link>
+        <link>https://github.com/shibing624/open-vibe-island/releases</link>
         <description>Most recent changes with links to updates.</description>
         <language>en</language>
         <!-- Items are added by the release workflow. See docs/releasing.md. -->
@@ -13,7 +13,7 @@
             <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
             <pubDate>Tue, 15 Sep 2026 07:41:04 +0000</pubDate>
             <enclosure
-                url="https://github.com/Octane0411/open-vibe-island/releases/download/v1.2.1/Open.Island.zip"
+                url="https://github.com/shibing624/open-vibe-island/releases/download/v1.2.1/Open.Island.zip"
                 type="application/octet-stream"
                 sparkle:edSignature="IcwnAxp6A6BNfdIY2KgsZUGSeGbDZOi3Jgh1onak2AHDwNDnDJNYU9pHqBd4zJhgWs+r6CZ59MMz32DjfriMAw=="
                 length="13193146"

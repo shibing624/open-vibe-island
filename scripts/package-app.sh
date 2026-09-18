@@ -129,7 +129,7 @@ cat > "$bundle_dir/Contents/Info.plist" <<EOF
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>SUFeedURL</key>
-    <string>https://raw.githubusercontent.com/Octane0411/open-vibe-island/main/appcast.xml</string>
+    <string>https://raw.githubusercontent.com/shibing624/open-vibe-island/main/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>${OPEN_ISLAND_EDDSA_PUBLIC_KEY:-3IF8txq9RRNanzE2FNhyGRcwhslTucCcJHpTkpxcgBQ=}</string>
 </dict>

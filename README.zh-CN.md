@@ -13,14 +13,14 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Octane0411/open-vibe-island/releases/latest"><img src="https://img.shields.io/github/v/release/Octane0411/open-vibe-island?style=flat-square&label=release&color=blue" alt="最新版本"></a>
-  <a href="https://github.com/Octane0411/open-vibe-island/stargazers"><img src="https://img.shields.io/github/stars/Octane0411/open-vibe-island?style=flat-square&color=yellow" alt="Stars"></a>
+  <a href="https://github.com/shibing624/open-vibe-island/releases/latest"><img src="https://img.shields.io/github/v/release/shibing624/open-vibe-island?style=flat-square&label=release&color=blue" alt="最新版本"></a>
+  <a href="https://github.com/shibing624/open-vibe-island/stargazers"><img src="https://img.shields.io/github/stars/shibing624/open-vibe-island?style=flat-square&color=yellow" alt="Stars"></a>
   <a href="https://discord.gg/bPF2HpbCFb"><img src="https://img.shields.io/discord/1490752192368476253?style=flat-square&logo=discord&label=discord&color=5865F2" alt="Discord"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL%20v3-green?style=flat-square" alt="License: GPL v3"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Octane0411/open-vibe-island/releases">下载</a> ·
+  <a href="https://github.com/shibing624/open-vibe-island/releases">下载</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="docs/roadmap.zh-CN.md">路线图</a> ·
   <a href="CONTRIBUTING.zh-CN.md">参与贡献</a>
@@ -116,7 +116,7 @@ Open Island 驻留在 Mac 的**刘海区域**（或顶部栏），为你的 AI c
 
 ### 方式一：直接下载
 
-从 [GitHub Releases](https://github.com/Octane0411/open-vibe-island/releases) 下载最新 DMG——已签名公证，开箱即用。
+从 [GitHub Releases](https://github.com/shibing624/open-vibe-island/releases) 下载最新 DMG——已签名公证，开箱即用。
 
 ### 方式二：Homebrew
 
@@ -129,7 +129,7 @@ brew install --cask open-island
 ### 方式三：从源码构建
 
 ```bash
-git clone https://github.com/Octane0411/open-vibe-island.git
+git clone https://github.com/shibing624/open-vibe-island.git
 cd open-vibe-island
 open Package.swift   # 在 Xcode 中打开，点击 Run
 ```
@@ -193,7 +193,7 @@ Hooks **fail open**——如果 Open Island 没在运行，你的 agents 不受�
 <summary>点击展开</summary>
 
 ```
-我在使用 Open Island (https://github.com/Octane0411/open-vibe-island) 时遇到了问题。
+我在使用 Open Island (https://github.com/shibing624/open-vibe-island) 时遇到了问题。
 
 请帮我提交一个 GitHub issue，按以下步骤操作：
 
@@ -214,26 +214,26 @@ Hooks **fail open**——如果 Open Island 没在运行，你的 agents 不受�
    - 正文包含以下部分：**环境信息**、**问题描述**、**复现步骤**、**期望行为 vs 实际行为**
    - 如果是 bug 请添加 "bug" 标签
 
-仓库：Octane0411/open-vibe-island
+仓库：shibing624/open-vibe-island
 ```
 
 </details>
 
 ## Star History
 
-<a href="https://star-history.dera.page/#Octane0411/open-vibe-island&Date">
+<a href="https://star-history.dera.page/#shibing624/open-vibe-island&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=Octane0411/open-vibe-island&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=Octane0411/open-vibe-island&type=Date" />
-   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=Octane0411/open-vibe-island&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=shibing624/open-vibe-island&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=shibing624/open-vibe-island&type=Date" />
+   <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=shibing624/open-vibe-island&type=Date" />
  </picture>
 </a>
 
 ## Contributors
 
-<a href="https://github.com/Octane0411/open-vibe-island/graphs/contributors">
+<a href="https://github.com/shibing624/open-vibe-island/graphs/contributors">
   <!-- CONTRIBUTORS-IMG:START -->
-  <img src="https://contrib.rocks/image?repo=Octane0411/open-vibe-island&t=1789458094" />
+  <img src="https://contrib.rocks/image?repo=shibing624/open-vibe-island&t=1789458094" />
   <!-- CONTRIBUTORS-IMG:END -->
 </a>
 

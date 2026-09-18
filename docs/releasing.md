@@ -127,7 +127,7 @@ Every release ships two artifacts:
 The file `appcast.xml` in the repo root is the Sparkle update feed. It is served via GitHub raw content at:
 
 ```
-https://raw.githubusercontent.com/Octane0411/open-vibe-island/main/appcast.xml
+https://raw.githubusercontent.com/shibing624/open-vibe-island/main/appcast.xml
 ```
 
 Each release needs a new `<item>` entry. Template:
@@ -140,7 +140,7 @@ Each release needs a new `<item>` entry. Template:
     <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
     <pubDate>Thu, 06 Apr 2026 00:00:00 +0000</pubDate>
     <enclosure
-        url="https://github.com/Octane0411/open-vibe-island/releases/download/vX.Y.Z/Open.Island.zip"
+        url="https://github.com/shibing624/open-vibe-island/releases/download/vX.Y.Z/Open.Island.zip"
         type="application/octet-stream"
         sparkle:edSignature="PASTE_SIGNATURE_HERE"
         length="PASTE_LENGTH_HERE"
