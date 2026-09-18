@@ -95,6 +95,21 @@ public struct SessionState: Equatable, Sendable {
                 return
             }
 
+            // A run whose process is gone does not go back to running: a hook
+            // that arrives after SessionEnd is describing the past, not new
+            // work. Without this the island shows "running" for an agent that
+            // has already exited, because every per-tool hook emits .running.
+            //
+            // A session legitimately restarts through .sessionStarted, which
+            // clears isSessionEnded explicitly — so this does not strand a
+            // reused session id. Only .running is refused; a late .completed
+            // or an error phase still lands, since those agree the run is over.
+            if session.isSessionEnded, payload.phase == .running {
+                session.updatedAt = payload.timestamp
+                upsert(session)
+                return
+            }
+
             let keepsPendingApproval = payload.phase == .running
                 && session.phase == .waitingForApproval
                 && session.permissionRequest != nil
