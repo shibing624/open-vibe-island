@@ -313,11 +313,15 @@ struct SoundSettingsPane: View {
                     }
                 }
 
-                Button(lang.t("settings.sound.theme.download")) {
-                    model.downloadSoundThemes()
+                Button(lang.t("settings.sound.theme.rescan")) {
+                    model.reloadSoundThemes()
                 }
             } header: {
                 Text(lang.t("settings.sound.theme"))
+            } footer: {
+                Text(lang.t("settings.sound.theme.installHint"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             if let theme = model.currentSoundTheme {

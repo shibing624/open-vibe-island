@@ -129,7 +129,8 @@
 "settings.sound.selectSound" = "Select Sound";
 "settings.sound.theme" = "Event Sound Theme";
 "settings.sound.theme.system" = "System (one sound for all events)";
-"settings.sound.theme.download" = "Download More Sound Packs";
+"settings.sound.theme.rescan" = "Rescan Sound Packs";
+"settings.sound.theme.installHint" = "The Orc Peon theme ships with the app. More packs can be added with ./scripts/fetch-sound-packs.sh.";
 "settings.sound.theme.preview" = "Preview by Event";
 "settings.sound.theme.borrowed" = "This pack has no sound for this event — borrowed from its other sounds.";
 "settings.sound.theme.info" = "Pack Info";
