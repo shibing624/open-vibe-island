@@ -1278,6 +1278,46 @@ struct TerminalJumpServiceTests {
         expectAppleScriptFailed(error, message: refusal)
     }
 
+    /// The iTerm jump script compares `id of session`, which iTerm's scripting
+    /// dictionary answers with a bare UUID, against the target's session id.
+    /// pi and opencode record `ITERM_SESSION_ID`, which `iTerm2.sdef` documents
+    /// as `w0t0p0:UUID` — so before normalization the two could never be equal
+    /// and the jump fell back to the TTY alone.
+    ///
+    /// Asserts the id that reaches the script, because that is the whole
+    /// observable difference: a script comparing the prefixed form runs happily
+    /// and simply never matches anything.
+    @Test
+    func theITermJumpScriptComparesTheBareSessionUUID() throws {
+        let ranScripts = RanScriptsBox()
+        let uuid = "2DBAB2C2-74D9-42A7-A014-10CD3E324E7B"
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { script in
+                ranScripts.values.append(script)
+                return ""
+            }
+        )
+
+        _ = try service.jump(
+            to: JumpTarget(
+                terminalApp: "iTerm",
+                workspaceName: "repo",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/repo",
+                terminalSessionID: "w0t0p0:\(uuid)"
+            )
+        )
+
+        let script = try #require(ranScripts.values.first { $0.contains("id of aSession") })
+        #expect(script.contains(#"(id of aSession as text) is "\#(uuid)""#))
+        // The prefixed form must not survive into the comparison, and the
+        // window/tab/pane prefix must not be left behind as a stray literal.
+        #expect(!script.contains("w0t0p0:"))
+    }
+
     /// Every case carries the detail its message needs; an empty description
     /// would leave the user with "Jump failed: ".
     @Test
@@ -1296,6 +1336,10 @@ struct TerminalJumpServiceTests {
 
 final class TmuxInvocationBox: @unchecked Sendable {
     var values: [[String]] = []
+}
+
+final class RanScriptsBox: @unchecked Sendable {
+    var values: [String] = []
 }
 
 final class ReadSequenceBox: @unchecked Sendable {

@@ -482,6 +482,12 @@ struct TerminalJumpService {
     }
 
     private func jumpToITermSession(_ target: JumpTarget) throws -> Bool {
+        // `id of session` answers with a bare UUID, while pi and opencode record
+        // `ITERM_SESSION_ID` as `w0t0p0:UUID`. Compared verbatim, those two
+        // agents could never match on id and depended entirely on the TTY.
+        let appleScriptSessionID = escapeAppleScript(
+            target.terminalSessionID.map(TerminalSessionIdentity.iTermSessionID)
+        )
         let script = """
         tell application "iTerm"
             if not (it is running) then return ""
@@ -490,7 +496,7 @@ struct TerminalJumpService {
                 repeat with aTab in tabs of aWindow
                     repeat with aSession in sessions of aTab
                         set matched to false
-                        if "\(escapeAppleScript(target.terminalSessionID))" is not "" and (id of aSession as text) is "\(escapeAppleScript(target.terminalSessionID))" then
+                        if "\(appleScriptSessionID)" is not "" and (id of aSession as text) is "\(appleScriptSessionID)" then
                             set matched to true
                         end if
                         if not matched and "\(escapeAppleScript(target.terminalTTY))" is not "" and (tty of aSession as text) is "\(escapeAppleScript(target.terminalTTY))" then
