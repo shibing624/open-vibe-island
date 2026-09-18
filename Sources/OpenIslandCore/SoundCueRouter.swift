@@ -13,6 +13,7 @@ import Foundation
 /// | Event | Rings | Why |
 /// |---|---|---|
 /// | session registered | no | the user is looking at the terminal they just typed in |
+/// | session re-registered as a continuation | no | `resume` / `clear` / `compact` are the same work, not a new start |
 /// | first prompt of a session | `taskAcknowledge` | "this piece of work has started" |
 /// | later prompts in the same session | no | still the same piece of work; ringing every turn dilutes into noise |
 /// | tool activity | no | a turn runs a dozen tools — that is a scrolling log, not a notification |
@@ -20,6 +21,19 @@ import Foundation
 /// | turn failed | `taskError` | same, and it needs a different sound |
 /// | waiting for approval / answer | `inputRequired` | the agent is blocked on the user |
 /// | user-initiated interrupt | no | the user pressed the key themselves |
+///
+/// ## Which registrations re-arm the first prompt
+///
+/// A session is registered more than once in practice. Claude Code re-announces
+/// the same session as `resume`, `clear` or `compact` — most often after an
+/// automatic context compaction, which can happen mid-conversation while the
+/// user is still working. Only `startup` means "a new conversation", so only
+/// `startup` re-arms `taskAcknowledge`; the continuations leave the session
+/// acknowledged and the next prompt stays silent.
+///
+/// A brand-new session needs no re-arming: its id is not in the set yet. The
+/// `startup` reset only covers the case of an id that was acknowledged earlier
+/// in this app run and then started over.
 ///
 /// `sessionStart` therefore has no trigger. It stays in `SoundCue` because it is
 /// a row of the upstream CESP table and because the settings pane previews all
@@ -47,9 +61,20 @@ public struct SoundCueRouter: Sendable {
     public mutating func cue(for event: AgentEvent) -> SoundCue? {
         switch event {
         case let .sessionStarted(payload):
-            // Silent by design (see the table above), but a fresh session
-            // registration means the next turn is a first turn again.
-            acknowledgedSessionIDs.remove(payload.sessionID)
+            // Silent by design (see the table above). Only a `startup`
+            // registration starts a new conversation, so only it re-arms the
+            // first prompt; `resume` / `clear` / `compact` continue the work the
+            // user already acknowledged and must stay quiet.
+            //
+            // `startupSource` lives on the Claude metadata because Claude Code
+            // is the only agent whose wire reports a start source; every other
+            // source therefore reads `nil` here and is treated as a
+            // continuation. That is the conservative side, and it costs nothing:
+            // a genuinely new session's id is absent from the set anyway and
+            // needs no reset.
+            if payload.claudeMetadata?.startupSource == .startup {
+                acknowledgedSessionIDs.remove(payload.sessionID)
+            }
             return nil
 
         case let .activityUpdated(payload):

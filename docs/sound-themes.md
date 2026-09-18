@@ -75,6 +75,24 @@ Notes on the two rows that surprise people:
   piece of work, and one ring per turn dilutes into background noise. Tool
   activity inside a turn never rings — a turn runs a dozen tools.
 
+### Only `startup` re-arms the first prompt
+
+Claude Code re-registers the *same* session whenever context is resumed, cleared
+or compacted, and it says which it was in the `SessionStart` payload's `source`
+(`startup` / `resume` / `clear` / `compact`). Automatic compaction can fire
+mid-conversation while the user is still working, so treating every
+re-registration as "a new session" made the *next* prompt ring
+`taskAcknowledge` again — the same work announced twice.
+
+The router therefore re-arms the first prompt only on `startup`; the three
+continuations leave the session acknowledged and the next prompt stays silent.
+A genuinely new session needs no re-arming — its id is not in the set yet.
+
+`startupSource` is read off the Claude metadata, because Claude Code is the only
+agent whose wire reports a start source. Every other source reads `nil` and is
+treated as a continuation, which is the conservative direction and costs
+nothing.
+
 A user-initiated interrupt (`isInterrupt`) is silent: the user pressed the key.
 
 ### Failure detection is partial

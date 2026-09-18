@@ -5,14 +5,18 @@ import Testing
 /// Coverage for which agent events ring, and which deliberately do not.
 struct SoundCueRouterTests {
 
-    private func started(_ sessionID: String) -> AgentEvent {
+    private func started(
+        _ sessionID: String,
+        source: ClaudeSessionStartSource? = nil
+    ) -> AgentEvent {
         .sessionStarted(
             SessionStarted(
                 sessionID: sessionID,
                 title: "Claude · island",
                 tool: .claudeCode,
                 summary: "Session started.",
-                timestamp: Date(timeIntervalSince1970: 1_000)
+                timestamp: Date(timeIntervalSince1970: 1_000),
+                claudeMetadata: source.map { ClaudeSessionMetadata(startupSource: $0) }
             )
         )
     }
@@ -68,15 +72,30 @@ struct SoundCueRouterTests {
         #expect(router.cue(for: running("s1")) == nil)
     }
 
-    /// A fresh registration for the same id is a new session, so its first turn
-    /// counts again.
+    /// `startup` is the only registration that means "a new conversation", so it
+    /// is the only one that re-arms the first prompt.
     @Test
-    func restartedSessionRingsItsFirstPromptAgain() {
+    func startupRegistrationRingsItsFirstPromptAgain() {
         var router = SoundCueRouter()
 
         #expect(router.cue(for: running("s1")) == .taskAcknowledge)
-        #expect(router.cue(for: started("s1")) == nil)
+        #expect(router.cue(for: started("s1", source: .startup)) == nil)
         #expect(router.cue(for: running("s1")) == .taskAcknowledge)
+    }
+
+    /// Claude Code re-announces the *same* session as `resume`, `clear` or
+    /// `compact` — after an automatic context compaction, most often. Those are
+    /// continuations of work the user already acknowledged, so the next prompt
+    /// must stay silent instead of ringing "task started" a second time.
+    @Test
+    func continuationRegistrationsDoNotRearmTheFirstPrompt() {
+        for source in [ClaudeSessionStartSource.resume, .clear, .compact] {
+            var router = SoundCueRouter()
+
+            #expect(router.cue(for: running("s1")) == .taskAcknowledge)
+            #expect(router.cue(for: started("s1", source: source)) == nil)
+            #expect(router.cue(for: running("s1")) == nil)
+        }
     }
 
     @Test
