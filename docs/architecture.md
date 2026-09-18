@@ -87,6 +87,35 @@ Terminal focus restoration is implemented per-terminal:
 
 The hook helper enriches payloads with terminal-local hints (terminal app, TTY, session ID, window title) from environment inspection at hook invocation time.
 
+### Matching a session to a tab
+
+Every terminal host is queried for a list of its tabs, and each session is then
+matched to one of them. The signals are not interchangeable, so the order below
+is load-bearing:
+
+1. **Identity** — a terminal session id (Ghostty surface, iTerm session, cmux
+   surface, WezTerm/Kaku pane id) or a TTY names exactly one tab.
+2. **The session id inside the tab title.** Agent CLIs title their tab after the
+   conversation they are running, and in a standalone Ghostty that title is the
+   *only* identity a tab carries: the environment exports no surface id there and
+   the scripting dictionary exposes neither a tty nor a process.
+3. **Working directory** and **title**, which are weak: several agents of one
+   kind in one repository share a working directory, and their titles repeat.
+
+An identity decides on its own. A weak signal is allowed to bind only when
+exactly one candidate tab matches — the count is taken inside the AppleScript for
+the jump itself, and in Swift for the resolver and the attachment probe. A weak
+signal that several tabs share identifies none of them; binding anyway raises
+whichever tab the terminal happens to enumerate first, which is a jump onto
+another agent's conversation, and it looks intermittent because that order
+follows tab focus and reordering.
+
+The same rule applies to the hook that captures the target: a focus-scoped
+AppleScript locator (`focused terminal of …`, `current session of current window`,
+`selected tab of front window`) may only be asked at `SessionStart` and
+`UserPromptSubmit`, when the agent's own tab is the focused one. Asking on later
+events stamps whichever tab is frontmost onto the session that fired.
+
 ## Technologies
 
 - SwiftUI for most UI composition

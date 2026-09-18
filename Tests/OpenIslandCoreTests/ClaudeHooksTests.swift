@@ -385,6 +385,49 @@ struct ClaudeHooksTests {
         #expect(atTool.terminalTitle == nil)
     }
 
+    /// iTerm's locator asks the *focused* window, exactly like Ghostty's, so it
+    /// carries the same hazard: a hook firing after the user switched tabs
+    /// stamps whichever session is frontmost onto the session that fired. The
+    /// Ghostty branch guards against this by only asking when the user is known
+    /// to be in that terminal; iTerm had no such guard, so every tool call
+    /// during a turn could overwrite the session's own target with a stranger's.
+    @Test
+    func claudeITermLocatorIsNotConsultedOnToolUse() {
+        let env = ["TERM_PROGRAM": "iTerm.app", "ITERM_SESSION_ID": "w0t0p0:OWN-UUID"]
+        // iTerm's AppleScript `id` is the bare UUID; the `w0t0p0:` prefix exists
+        // only in the environment variable, which is not what gets stored.
+        let locator: (String) -> (sessionID: String?, tty: String?, title: String?) = { _ in
+            (sessionID: "SOMEONE-ELSES-UUID", tty: "/dev/ttys999", title: "someone else")
+        }
+        let ttyProvider: () -> String? = { "/dev/ttys031" }
+
+        // SessionStart: the locator IS used — this terminal is the focused one
+        // because the user just started the agent in it.
+        let atStart = ClaudeHookPayload(
+            cwd: "/tmp/worktree", hookEventName: .sessionStart, sessionID: "s1"
+        ).withRuntimeContext(environment: env, currentTTYProvider: ttyProvider, terminalLocatorProvider: locator)
+
+        #expect(atStart.terminalSessionID == "SOMEONE-ELSES-UUID")
+
+        // PreToolUse: the locator is NOT used, so the stranger's id captured
+        // above cannot be re-stamped onto this session mid-turn.
+        let atTool = ClaudeHookPayload(
+            cwd: "/tmp/worktree", hookEventName: .preToolUse, sessionID: "s1"
+        ).withRuntimeContext(
+            environment: env,
+            currentTTYProvider: ttyProvider,
+            terminalLocatorProvider: { _ in
+                (sessionID: "A-DIFFERENT-STRANGER", tty: "/dev/ttys998", title: "another tab")
+            }
+        )
+
+        #expect(atTool.terminalSessionID == nil)
+        #expect(atTool.terminalTitle == nil)
+        // The TTY is captured locally, not from the focus-scoped locator, so it
+        // survives and keeps addressing this session's own tab.
+        #expect(atTool.terminalTTY == "/dev/ttys031")
+    }
+
     @Test
     func claudeInferTerminalAppRecognizesWarpViaEnvVar() {
         let payload = ClaudeHookPayload(

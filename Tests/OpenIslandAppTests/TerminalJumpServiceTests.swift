@@ -60,6 +60,48 @@ struct TerminalJumpServiceTests {
         #expect(missed == "Activated Ghostty. Exact pane targeting could not find the live terminal.")
     }
 
+    /// The Terminal.app tab script had no coverage at all, so the two ways it
+    /// silently selects the wrong tab went unnoticed. It tested the TTY and the
+    /// custom title per tab, which means an earlier tab's *title* could win over
+    /// a later tab's TTY; and the title is a substring test, so with several
+    /// agents of one kind in one repository the first one listed was selected.
+    /// Selecting the wrong tab shows another agent's conversation.
+    ///
+    /// The rule is inside the AppleScript, so what is pinned here is the
+    /// mechanism: the TTY pass closes over every tab before the title pass
+    /// starts, and the title binds only under an `is 1` guard over collected
+    /// matches.
+    @Test
+    func terminalTabJumpScriptLooksUpTheTTYBeforeTheTitleAndRefusesAnAmbiguousTitle() throws {
+        let scripts = ScriptCaptureBox()
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/Utilities/Terminal.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { script in
+                scripts.values.append(script)
+                return "matched"
+            }
+        )
+
+        let target = JumpTarget(
+            terminalApp: "Terminal",
+            workspaceName: "open-island",
+            paneTitle: "codex ~/p/open-island",
+            workingDirectory: "/Users/u/p/open-island",
+            terminalTTY: "/dev/ttys004"
+        )
+
+        _ = try service.jump(to: target)
+        let script = try #require(scripts.values.last)
+
+        let ttyPass = try #require(script.range(of: "if \"/dev/ttys004\" is not \"\""))
+        let titlePass = try #require(script.range(of: "set titleMatches to {}"))
+        #expect(ttyPass.lowerBound < titlePass.lowerBound)
+        #expect(script.contains("set titleMatches to {}"))
+        #expect(script.contains("if (count of titleMatches) is 1 then"))
+    }
+
     /// Every step pinned here happens *inside* the AppleScript that `osascript`
     /// runs: the window/tab/terminal walk, the retry loop and its delays, and
     /// the read-back that decides whether focus stuck. None of it can be
@@ -127,6 +169,38 @@ struct TerminalJumpServiceTests {
         // a title the two fallback branches collapse to a dead condition. That
         // the branch is dead is an AppleScript fact, not one Swift can check.
         #expect(script.contains("if \"\" is \"\" then"))
+    }
+
+    /// Both fallbacks refuse to pick when several terminals match, because a
+    /// working directory is shared by every tab open in one repository and agent
+    /// titles repeat. Taking the first hit raises whichever tab Ghostty
+    /// enumerates first, which is a jump onto another agent's conversation —
+    /// and intermittent, because that order follows tab focus.
+    ///
+    /// The count can only be taken inside the AppleScript, so the mechanism is
+    /// asserted here as the two things that implement it: the matches are
+    /// collected rather than acted on as they are found, and the focus happens
+    /// only under a `is 1` guard. Without the guard the collection would be
+    /// pointless and the script would be back to the first-hit behaviour.
+    @Test
+    func ghosttyJumpScriptRefusesAnAmbiguousWorkingDirectoryOrTitle() {
+        let target = JumpTarget(
+            terminalApp: "Ghostty",
+            workspaceName: "open-island",
+            paneTitle: "codex ~/p/open-island",
+            workingDirectory: "/Users/wangruobing/Personal/open-island",
+            terminalSessionID: "448D7E28-24FB-46F1-9504-C252F97926C1"
+        )
+
+        let script = TerminalJumpService().ghosttyJumpScript(for: target)
+
+        #expect(script.contains("set cwdMatches to {}"))
+        #expect(script.contains("set titleMatches to {}"))
+        #expect(script.contains("if (count of cwdMatches) is 1 then"))
+        #expect(script.contains("if (count of titleMatches) is 1 then"))
+        // The identity fallback still acts on the first id match it finds: a
+        // surface id names exactly one terminal, so it needs no counting.
+        #expect(!script.contains("set idMatches to {}"))
     }
 
     /// A path or title carrying a quote or a backslash must be escaped before it
@@ -1204,6 +1278,46 @@ struct TerminalJumpServiceTests {
         expectAppleScriptFailed(error, message: refusal)
     }
 
+    /// The iTerm jump script compares `id of session`, which iTerm's scripting
+    /// dictionary answers with a bare UUID, against the target's session id.
+    /// pi and opencode record `ITERM_SESSION_ID`, which `iTerm2.sdef` documents
+    /// as `w0t0p0:UUID` — so before normalization the two could never be equal
+    /// and the jump fell back to the TTY alone.
+    ///
+    /// Asserts the id that reaches the script, because that is the whole
+    /// observable difference: a script comparing the prefixed form runs happily
+    /// and simply never matches anything.
+    @Test
+    func theITermJumpScriptComparesTheBareSessionUUID() throws {
+        let ranScripts = RanScriptsBox()
+        let uuid = "2DBAB2C2-74D9-42A7-A014-10CD3E324E7B"
+        let service = TerminalJumpService(
+            applicationResolver: { _ in URL(fileURLWithPath: "/Applications/iTerm.app") },
+            appRunningChecker: { _ in true },
+            openAction: { _ in },
+            appleScriptRunner: { script in
+                ranScripts.values.append(script)
+                return ""
+            }
+        )
+
+        _ = try service.jump(
+            to: JumpTarget(
+                terminalApp: "iTerm",
+                workspaceName: "repo",
+                paneTitle: "agent",
+                workingDirectory: "/Users/u/repo",
+                terminalSessionID: "w0t0p0:\(uuid)"
+            )
+        )
+
+        let script = try #require(ranScripts.values.first { $0.contains("id of aSession") })
+        #expect(script.contains(#"(id of aSession as text) is "\#(uuid)""#))
+        // The prefixed form must not survive into the comparison, and the
+        // window/tab/pane prefix must not be left behind as a stray literal.
+        #expect(!script.contains("w0t0p0:"))
+    }
+
     /// Every case carries the detail its message needs; an empty description
     /// would leave the user with "Jump failed: ".
     @Test
@@ -1222,6 +1336,10 @@ struct TerminalJumpServiceTests {
 
 final class TmuxInvocationBox: @unchecked Sendable {
     var values: [[String]] = []
+}
+
+final class RanScriptsBox: @unchecked Sendable {
+    var values: [String] = []
 }
 
 final class ReadSequenceBox: @unchecked Sendable {

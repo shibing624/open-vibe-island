@@ -482,6 +482,12 @@ struct TerminalJumpService {
     }
 
     private func jumpToITermSession(_ target: JumpTarget) throws -> Bool {
+        // `id of session` answers with a bare UUID, while pi and opencode record
+        // `ITERM_SESSION_ID` as `w0t0p0:UUID`. Compared verbatim, those two
+        // agents could never match on id and depended entirely on the TTY.
+        let appleScriptSessionID = escapeAppleScript(
+            target.terminalSessionID.map(TerminalSessionIdentity.iTermSessionID)
+        )
         let script = """
         tell application "iTerm"
             if not (it is running) then return ""
@@ -490,7 +496,7 @@ struct TerminalJumpService {
                 repeat with aTab in tabs of aWindow
                     repeat with aSession in sessions of aTab
                         set matched to false
-                        if "\(escapeAppleScript(target.terminalSessionID))" is not "" and (id of aSession as text) is "\(escapeAppleScript(target.terminalSessionID))" then
+                        if "\(appleScriptSessionID)" is not "" and (id of aSession as text) is "\(appleScriptSessionID)" then
                             set matched to true
                         end if
                         if not matched and "\(escapeAppleScript(target.terminalTTY))" is not "" and (tty of aSession as text) is "\(escapeAppleScript(target.terminalTTY))" then
@@ -887,50 +893,54 @@ struct TerminalJumpService {
                 end if
             end repeat
 
+            -- The two fallbacks below are searchable only when exactly one
+            -- terminal matches. A working directory is shared by every tab open
+            -- in the same repository and agent titles repeat, so taking the
+            -- first hit raises whichever tab Ghostty enumerates first — a jump
+            -- onto another agent's conversation, intermittent because the order
+            -- follows tab focus and reordering. A signal several terminals share
+            -- identifies none of them, so it is refused and the caller reports
+            -- that exact targeting could not find the terminal.
             if targetTerminal is missing value and "\(workingDirectory)" is not "" then
+                set cwdMatches to {}
                 repeat with aWindow in windows
                     repeat with aTab in tabs of aWindow
                         repeat with aTerminal in terminals of aTab
-                            if (working directory of aTerminal as text) is "\(workingDirectory)" then
-                                set targetWindow to aWindow
-                                set targetTab to aTab
-                                set targetTerminal to aTerminal
-                                exit repeat
-                            end if
+                            try
+                                if (working directory of aTerminal as text) is "\(workingDirectory)" then
+                                    set end of cwdMatches to {aWindow, aTab, aTerminal}
+                                end if
+                            end try
                         end repeat
-
-                        if targetTerminal is not missing value then
-                            exit repeat
-                        end if
                     end repeat
-
-                    if targetTerminal is not missing value then
-                        exit repeat
-                    end if
                 end repeat
+
+                if (count of cwdMatches) is 1 then
+                    set targetWindow to item 1 of item 1 of cwdMatches
+                    set targetTab to item 1 of item 2 of cwdMatches
+                    set targetTerminal to item 1 of item 3 of cwdMatches
+                end if
             end if
 
             if targetTerminal is missing value and "\(paneTitle)" is not "" then
+                set titleMatches to {}
                 repeat with aWindow in windows
                     repeat with aTab in tabs of aWindow
                         repeat with aTerminal in terminals of aTab
-                            if (name of aTerminal as text) contains "\(paneTitle)" then
-                                set targetWindow to aWindow
-                                set targetTab to aTab
-                                set targetTerminal to aTerminal
-                                exit repeat
-                            end if
+                            try
+                                if (name of aTerminal as text) contains "\(paneTitle)" then
+                                    set end of titleMatches to {aWindow, aTab, aTerminal}
+                                end if
+                            end try
                         end repeat
-
-                        if targetTerminal is not missing value then
-                            exit repeat
-                        end if
                     end repeat
-
-                    if targetTerminal is not missing value then
-                        exit repeat
-                    end if
                 end repeat
+
+                if (count of titleMatches) is 1 then
+                    set targetWindow to item 1 of item 1 of titleMatches
+                    set targetTab to item 1 of item 2 of titleMatches
+                    set targetTerminal to item 1 of item 3 of titleMatches
+                end if
             end if
 
             if targetTerminal is missing value then return ""
@@ -982,20 +992,43 @@ struct TerminalJumpService {
         tell application "Terminal"
             if not (it is running) then return ""
             activate
-            repeat with aWindow in windows
-                repeat with aTab in tabs of aWindow
-                    if "\(escapeAppleScript(target.terminalTTY))" is not "" and (tty of aTab as text) is "\(escapeAppleScript(target.terminalTTY))" then
-                        set selected of aTab to true
-                        set frontmost of aWindow to true
-                        return "matched"
-                    end if
-                    if "\(escapeAppleScript(target.paneTitle))" is not "" and (custom title of aTab as text) contains "\(escapeAppleScript(target.paneTitle))" then
-                        set selected of aTab to true
-                        set frontmost of aWindow to true
-                        return "matched"
-                    end if
+
+            -- The TTY is checked across every tab before the title is, and the
+            -- title is accepted only when exactly one tab matches. Testing both
+            -- per tab let an earlier tab's *title* win over a later tab's TTY:
+            -- several agents of one kind in one repository share a title, so the
+            -- first one listed was selected instead of the tab the TTY names.
+            -- Selecting the wrong tab shows another agent's conversation.
+            if "\(escapeAppleScript(target.terminalTTY))" is not "" then
+                repeat with aWindow in windows
+                    repeat with aTab in tabs of aWindow
+                        if (tty of aTab as text) is "\(escapeAppleScript(target.terminalTTY))" then
+                            set selected of aTab to true
+                            set frontmost of aWindow to true
+                            return "matched"
+                        end if
+                    end repeat
                 end repeat
-            end repeat
+            end if
+
+            if "\(escapeAppleScript(target.paneTitle))" is not "" then
+                set titleMatches to {}
+                repeat with aWindow in windows
+                    repeat with aTab in tabs of aWindow
+                        try
+                            if (custom title of aTab as text) contains "\(escapeAppleScript(target.paneTitle))" then
+                                set end of titleMatches to {aWindow, aTab}
+                            end if
+                        end try
+                    end repeat
+                end repeat
+
+                if (count of titleMatches) is 1 then
+                    set selected of (item 1 of item 2 of titleMatches) to true
+                    set frontmost of (item 1 of item 1 of titleMatches) to true
+                    return "matched"
+                end if
+            end if
         end tell
         return ""
         """

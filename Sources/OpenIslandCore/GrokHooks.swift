@@ -443,7 +443,7 @@ public extension GrokHookPayload {
             useLocator = false
         } else if isCmuxTerminalApp(payload.terminalApp) || isZellijTerminalApp(payload.terminalApp) {
             useLocator = false
-        } else if let terminalApp = payload.terminalApp, isGhosttyTerminalApp(terminalApp) {
+        } else if let terminalApp = payload.terminalApp, locatorAnswersWithTheFocusedWindow(terminalApp) {
             switch payload.hookEventName {
             case .sessionStart, .userPromptSubmit, .notification:
                 useLocator = true
@@ -520,8 +520,21 @@ public extension GrokHookPayload {
         return !Self.noLocatorTerminalApps.contains(lower)
     }
 
-    private func isGhosttyTerminalApp(_ terminalApp: String?) -> Bool {
-        terminalApp?.lowercased().contains("ghostty") == true
+    /// Terminals whose AppleScript locator answers with whichever window or tab
+    /// is frontmost instead of the one the agent runs in.
+    ///
+    /// It is exactly the three `terminalLocator(for:)` implements with a
+    /// focus-scoped query: Ghostty's `focused terminal of selected tab of front
+    /// window`, iTerm's `current session of current window`, and Terminal's
+    /// `selected tab of front window`. Asking any of them after the user has
+    /// moved to another tab stamps that tab's identity onto this session, which
+    /// points its jump at a different agent's conversation.
+    private static let focusScopedLocatorTerminalApps: Set<String> = [
+        "ghostty", "iterm", "terminal",
+    ]
+
+    private func locatorAnswersWithTheFocusedWindow(_ terminalApp: String) -> Bool {
+        Self.focusScopedLocatorTerminalApps.contains(terminalApp.lowercased())
     }
 
     private func isCmuxTerminalApp(_ terminalApp: String?) -> Bool {

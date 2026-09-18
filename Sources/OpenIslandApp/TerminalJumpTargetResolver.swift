@@ -147,47 +147,131 @@ struct TerminalJumpTargetResolver {
     ) -> [String: GhosttyTerminalSnapshot] {
         var assignments: [String: GhosttyTerminalSnapshot] = [:]
         var claimedSessionIDs: Set<String> = []
-        var claimedSnapshotIDs: Set<String> = []
+        var claimedSnapshotIndices: Set<Int> = []
 
-        // Pass 1: exact session ID match via terminal session ID.
-        for snapshot in snapshots where !claimedSnapshotIDs.contains(snapshot.sessionID) {
-            if let session = sessions.first(where: {
-                !claimedSessionIDs.contains($0.id)
-                    && nonEmptyValue($0.jumpTarget?.terminalSessionID) == snapshot.sessionID
-            }) {
-                assignments[session.id] = snapshot
-                claimedSessionIDs.insert(session.id)
-                claimedSnapshotIDs.insert(snapshot.sessionID)
-            }
+        // Pass 1: the session id in the pane title.
+        //
+        // Agent CLIs title their tab after the conversation they are running,
+        // and in a standalone Ghostty that title is the only identity a surface
+        // carries: the process environment has no surface id (only the cmux fork
+        // exports one), and the scripting dictionary exposes neither a tty nor a
+        // process.
+        //
+        // Ahead of the recorded surface id, not behind it, and deliberately: a
+        // stored id can already be wrong — a working-directory pass bound it to
+        // whichever tab was enumerated first — and an id that matches its
+        // snapshot would otherwise keep that mis-binding for the rest of the
+        // session. `TerminalSessionAttachmentProbe` resolves the same surfaces
+        // in this order, so the two writers of a jump target agree.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            snapshotTitleMentionsSessionID(snapshot, session: session)
         }
 
-        // Pass 2: working directory match.
-        for snapshot in snapshots where !claimedSnapshotIDs.contains(snapshot.sessionID) {
+        // Pass 2: exact session ID match via terminal session ID.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.terminalSessionID) == snapshot.sessionID
+        }
+
+        // Pass 3: working directory match.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
             let snapshotCWD = normalizedPathForMatching(snapshot.workingDirectory)
-            if let session = sessions.first(where: {
-                !claimedSessionIDs.contains($0.id)
-                    && snapshotCWD != nil
-                    && normalizedPathForMatching($0.jumpTarget?.workingDirectory) == snapshotCWD
-            }) {
-                assignments[session.id] = snapshot
-                claimedSessionIDs.insert(session.id)
-                claimedSnapshotIDs.insert(snapshot.sessionID)
-            }
+            return snapshotCWD != nil
+                && normalizedPathForMatching(session.jumpTarget?.workingDirectory) == snapshotCWD
         }
 
-        // Pass 3: pane title match.
-        for snapshot in snapshots where !claimedSnapshotIDs.contains(snapshot.sessionID) {
-            if let session = sessions.first(where: {
-                !claimedSessionIDs.contains($0.id)
-                    && nonEmptyValue($0.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
-            }) {
-                assignments[session.id] = snapshot
-                claimedSessionIDs.insert(session.id)
-                claimedSnapshotIDs.insert(snapshot.sessionID)
-            }
+        // Pass 4: pane title match.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
         }
 
         return assignments
+    }
+
+    /// Binds each unclaimed session that exactly one unclaimed snapshot matches.
+    ///
+    /// The uniqueness is the point. A working directory or a title is a *weak*
+    /// signal: several tabs in one repository report the same directory, and
+    /// agent titles repeat. Binding on one of them anyway picks whichever
+    /// surface the terminal happened to enumerate first, so a jump was raised on
+    /// another agent's tab and the user saw a different conversation — and
+    /// because that order changes as tabs are focused and reordered, it looked
+    /// intermittent. A signal that several surfaces share identifies none of
+    /// them, so the session keeps whatever target it already had.
+    ///
+    /// Iterated session-major so an already-bound session cannot take a second
+    /// surface, which is the bookkeeping the passes above used to do inline.
+    private func bindUniquelyMatching<Snapshot>(
+        sessions: [AgentSession],
+        snapshots: [Snapshot],
+        claimedSessionIDs: inout Set<String>,
+        claimedSnapshotIndices: inout Set<Int>,
+        assignments: inout [String: Snapshot],
+        matches: (Snapshot, AgentSession) -> Bool
+    ) {
+        for session in sessions where !claimedSessionIDs.contains(session.id) {
+            let candidates = snapshots.indices.filter {
+                !claimedSnapshotIndices.contains($0) && matches(snapshots[$0], session)
+            }
+
+            guard candidates.count == 1, let index = candidates.first else {
+                continue
+            }
+
+            assignments[session.id] = snapshots[index]
+            claimedSessionIDs.insert(session.id)
+            claimedSnapshotIndices.insert(index)
+        }
+    }
+
+    /// Whether the surface title names this session.
+    ///
+    /// Titles are clipped by their author, so the id arrives as a prefix of
+    /// varying length rather than whole; the lengths are the ones the attachment
+    /// probe has always accepted, kept identical so both matchers agree on which
+    /// tab a session owns.
+    private func snapshotTitleMentionsSessionID(
+        _ snapshot: GhosttyTerminalSnapshot,
+        session: AgentSession
+    ) -> Bool {
+        let normalizedTitle = snapshot.title.lowercased()
+        return sessionIDPrefixes(for: session).contains { normalizedTitle.contains($0) }
+    }
+
+    private func sessionIDPrefixes(for session: AgentSession) -> [String] {
+        let normalizedID = session.id.lowercased()
+        let prefixLengths = [normalizedID.count, 18, 13, 8]
+
+        return prefixLengths.compactMap { length in
+            guard length > 0, normalizedID.count >= length else {
+                return nil
+            }
+
+            return String(normalizedID.prefix(length))
+        }
     }
 
     private func correctedGhosttyJumpTarget(
@@ -391,24 +475,34 @@ struct TerminalJumpTargetResolver {
         to sessions: [AgentSession]
     ) -> [String: TerminalTabSnapshot] {
         var assignments: [String: TerminalTabSnapshot] = [:]
+        var claimedSessionIDs: Set<String> = []
+        var claimedSnapshotIndices: Set<Int> = []
 
-        for snapshot in snapshots {
-            // TTY match.
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.terminalTTY) == snapshot.tty
-            }) {
-                assignments[session.id] = snapshot
-                continue
-            }
+        // Strongest signal first across all tabs, the way the Ghostty and tmux
+        // matchers do it. Testing both rules per tab let an earlier tab's
+        // *title* claim a session whose TTY belongs to a later one: two tabs
+        // titled alike, and the session pinned by TTY to the second was selected
+        // in the first. A TTY is an identity; a title is a substring test and
+        // must never outrank it.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.terminalTTY) == snapshot.tty
+        }
 
-            // Pane title match.
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.paneTitle).map { snapshot.customTitle.contains($0) } == true
-            }) {
-                assignments[session.id] = snapshot
-            }
+        // The title is the last resort and only decides when it is unambiguous.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.paneTitle).map { snapshot.customTitle.contains($0) } == true
         }
 
         return assignments
@@ -455,50 +549,56 @@ struct TerminalJumpTargetResolver {
         to sessions: [AgentSession]
     ) -> [String: WeztermFamilySnapshot] {
         var assignments: [String: WeztermFamilySnapshot] = [:]
+        var claimedSessionIDs: Set<String> = []
+        var claimedSnapshotIndices: Set<Int> = []
 
-        // Pass 1: pane ID match via terminalSessionID.
-        for snapshot in snapshots {
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.terminalSessionID) == "\(snapshot.paneID)"
-            }) {
-                assignments[session.id] = snapshot
-            }
+        // Strongest signal first across all panes, and each pass binds only
+        // when a single unclaimed pane matches. A pane id or a TTY is an
+        // identity; the working directory and the title are not, and pane
+        // order follows focus, so the weak passes bind only when unambiguous.
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.terminalSessionID) == "\(snapshot.paneID)"
         }
 
-        // Pass 2: TTY match.
-        for snapshot in snapshots where !assignments.values.contains(where: { $0.paneID == snapshot.paneID }) {
-            guard let snapshotTTY = nonEmptyValue(snapshot.ttyName) else { continue }
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.terminalTTY) == snapshotTTY
-            }) {
-                assignments[session.id] = snapshot
-            }
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            guard let snapshotTTY = nonEmptyValue(snapshot.ttyName) else { return false }
+            return nonEmptyValue(session.jumpTarget?.terminalTTY) == snapshotTTY
         }
 
-        // Pass 3: working directory match.
-        for snapshot in snapshots where !assignments.values.contains(where: { $0.paneID == snapshot.paneID }) {
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
             let snapshotCWD = normalizedPathForMatching(
                 Self.weztermFamilyNormalizeCWD(snapshot.workingDirectory)
             )
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && snapshotCWD != nil
-                    && normalizedPathForMatching($0.jumpTarget?.workingDirectory) == snapshotCWD
-            }) {
-                assignments[session.id] = snapshot
-            }
+            return snapshotCWD != nil
+                && normalizedPathForMatching(session.jumpTarget?.workingDirectory) == snapshotCWD
         }
 
-        // Pass 4: title match.
-        for snapshot in snapshots where !assignments.values.contains(where: { $0.paneID == snapshot.paneID }) {
-            if let session = sessions.first(where: {
-                assignments[$0.id] == nil
-                    && nonEmptyValue($0.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
-            }) {
-                assignments[session.id] = snapshot
-            }
+        bindUniquelyMatching(
+            sessions: sessions,
+            snapshots: snapshots,
+            claimedSessionIDs: &claimedSessionIDs,
+            claimedSnapshotIndices: &claimedSnapshotIndices,
+            assignments: &assignments
+        ) { snapshot, session in
+            nonEmptyValue(session.jumpTarget?.paneTitle).map { snapshot.title.contains($0) } == true
         }
 
         return assignments
