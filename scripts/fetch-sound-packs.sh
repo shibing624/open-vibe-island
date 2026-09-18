@@ -238,7 +238,11 @@ for entry in "${PACKS[@]}"; do
 done
 
 echo
-du -sh "$DEST"/*(/N) 2>/dev/null | sed 's/^/  /' || true
+# `$DEST/*/` instead of the zsh-only `(/N)` qualifier: `sh` is what people
+# actually type (and what tests/CI would use), and on macOS `sh` is bash, which
+# cannot parse `(/N)` — it fails the whole script on this line. `find` needs no
+# qualifier, matches dirs only, and prints nothing when there are none.
+find "$DEST" -mindepth 1 -maxdepth 1 -type d -exec du -sh {} + 2>/dev/null | sed 's/^/  /' || true
 echo
 echo "Done. Pick the theme in Open Island > Settings > Sound."
 echo "If Open Island is already running, press \"Rescan Sound Packs\" there."
