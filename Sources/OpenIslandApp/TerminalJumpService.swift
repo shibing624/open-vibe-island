@@ -29,7 +29,7 @@ struct TerminalJumpService {
     /// which is what the ordering and abort behaviour need.
     typealias TmuxCommandRunner = @Sendable (_ socketArgs: [String], _ args: [String]) -> String?
 
-    private struct TerminalAppDescriptor {
+    struct TerminalAppDescriptor {
         let displayName: String
         let bundleIdentifier: String
         let aliases: [String]
@@ -55,7 +55,7 @@ struct TerminalJumpService {
         }
     }
 
-    private static let knownApps: [TerminalAppDescriptor] = [
+    static let knownApps: [TerminalAppDescriptor] = [
         TerminalAppDescriptor(
             displayName: "iTerm",
             bundleIdentifier: "com.googlecode.iterm2",
@@ -515,7 +515,7 @@ struct TerminalJumpService {
     /// Maps bundle identifiers to the CLI command used to open a workspace.
     /// Single source of truth — `vscodeFamilyBundleIDs` is derived from these
     /// keys, so adding a fork here automatically routes its activation case.
-    private static let vscodeFamilyCLI: [String: String] = [
+    static let vscodeFamilyCLI: [String: String] = [
         "com.microsoft.VSCode": "code",
         "com.microsoft.VSCodeInsiders": "code-insiders",
         "com.todesktop.230313mzl4w4u92": "cursor",
@@ -537,7 +537,7 @@ struct TerminalJumpService {
 
     /// Maps bundle identifiers to the CLI launcher script name (typically in
     /// `/usr/local/bin/` or `~/Library/Application Support/JetBrains/Toolbox/scripts/`).
-    private static let jetbrainsCLI: [String: String] = [
+    static let jetbrainsCLI: [String: String] = [
         "com.jetbrains.intellij": "idea",
         "com.jetbrains.WebStorm": "webstorm",
         "com.jetbrains.pycharm": "pycharm",
@@ -1260,6 +1260,13 @@ struct TerminalJumpService {
     }
 
     private func resolveTerminalApp(preferredName: String) -> TerminalAppDescriptor? {
+        resolveTerminalAppForTesting(preferredName: preferredName)
+    }
+
+    /// Name resolution, reachable from tests. `jump(to:)` cannot stand in for
+    /// it: every path past resolution activates an app or runs AppleScript, so
+    /// asserting "this name finds this descriptor" needs the step on its own.
+    func resolveTerminalAppForTesting(preferredName: String) -> TerminalAppDescriptor? {
         let normalized = normalizeTerminalAppName(preferredName)
 
         // "Unknown" is the hook-side sentinel meaning "we could not classify this
