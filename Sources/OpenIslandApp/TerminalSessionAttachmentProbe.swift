@@ -915,8 +915,12 @@ struct TerminalSessionAttachmentProbe {
             return false
         }
 
+        // Normalized through the same rule as the jump script, so the two
+        // cannot disagree about which session an id names. The snapshot side is
+        // already the bare form, because the AppleScript above reads `id of
+        // session`.
         if let sessionID = nonEmptyValue(jumpTarget.terminalSessionID),
-           snapshot.sessionID == sessionID {
+           TerminalSessionIdentity.iTermSessionID(sessionID) == snapshot.sessionID {
             return true
         }
 

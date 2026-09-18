@@ -1058,6 +1058,58 @@ struct TerminalSessionAttachmentProbeTests {
         #expect(resolutions[session.id]?.correctedJumpTarget == nil)
     }
 
+    /// A session whose id came from `ITERM_SESSION_ID` (`w0t0p0:UUID`) must be
+    /// bound to the iTerm session with that UUID.
+    ///
+    /// This is the end-to-end half of `TerminalSessionIdentityTests`: the rule
+    /// being right is worth nothing if this comparison does not apply it, and a
+    /// test of the rule alone would keep passing if the call were deleted. The
+    /// TTY is deliberately absent and the title deliberately does not match, so
+    /// the id is the only thing that can bind — without the normalization the
+    /// session stays unbound, which is what it did before.
+    @Test
+    func itermSessionIDFromTheEnvironmentBindsTheMatchingSession() {
+        let now = Date(timeIntervalSince1970: 7_000)
+        let probe = TerminalSessionAttachmentProbe()
+        let uuid = "2DBAB2C2-74D9-42A7-A014-10CD3E324E7B"
+        let session = AgentSession(
+            id: "5730b6f4-2222",
+            title: "pi · repo",
+            tool: .pi,
+            origin: .live,
+            attachmentState: .attached,
+            phase: .running,
+            summary: "Running",
+            updatedAt: now,
+            jumpTarget: JumpTarget(
+                terminalApp: "iTerm",
+                workspaceName: "repo",
+                paneTitle: "unrelated title",
+                workingDirectory: "/Users/u/repo",
+                terminalSessionID: "w0t0p0:\(uuid)"
+            )
+        )
+
+        let resolutions = probe.sessionResolutions(
+            for: [session],
+            ghosttyAvailability: .available([] as [TerminalSessionAttachmentProbe.GhosttyTerminalSnapshot], appIsRunning: false),
+            terminalAvailability: .available([] as [TerminalSessionAttachmentProbe.TerminalTabSnapshot], appIsRunning: false),
+            itermAvailability: .available(
+                [
+                    .init(sessionID: uuid, tty: "/dev/ttys001", title: "pi ~/p/repo"),
+                    .init(sessionID: "OTHER", tty: "/dev/ttys002", title: "pi ~/p/other"),
+                ],
+                appIsRunning: true
+            ),
+            now: now
+        )
+
+        // The recorded id is the same session written the way iTerm's AppleScript
+        // spells it, so the target is already correct and must not be replaced.
+        #expect(resolutions[session.id]?.correctedJumpTarget?.terminalSessionID == uuid)
+        #expect(resolutions[session.id]?.correctedJumpTarget?.terminalTTY == "/dev/ttys001")
+    }
+
     /// The same ambiguity, but for the terminal whose tab identity is a TTY:
     /// two Terminal.app tabs, one TTY each, and the session names the second.
     /// The TTY must decide regardless of which tab Terminal.app lists first.
