@@ -229,11 +229,20 @@ final class ProcessMonitoringCoordinator {
 
     // MARK: - Reconciliation
 
+    /// Applies process and terminal facts to the session list.
+    ///
+    /// `preResolvedJumpTargets` has no default on purpose. This method is
+    /// `@MainActor`, and resolving jump targets here runs tmux/wezterm CLIs and
+    /// AppleScript probes synchronously — seconds of frozen UI. The monitoring
+    /// loop resolves them on a detached task and passes them in; a caller that
+    /// has not done that work must say so with `nil` rather than inherit a
+    /// default that silently blocks. Passing `nil` skips resolution entirely
+    /// instead of falling back to running it inline.
     func reconcileSessionAttachments(
         activeProcesses: [ActiveProcessSnapshot]? = nil,
         ghosttyAvailability: TerminalSessionAttachmentProbe.SnapshotAvailability<TerminalSessionAttachmentProbe.GhosttyTerminalSnapshot>? = nil,
         terminalAvailability: TerminalSessionAttachmentProbe.SnapshotAvailability<TerminalSessionAttachmentProbe.TerminalTabSnapshot>? = nil,
-        preResolvedJumpTargets: [String: JumpTarget]? = nil,
+        preResolvedJumpTargets: [String: JumpTarget]?,
         observedCodexAppRunning: Bool? = nil
     ) {
         let activeProcesses = activeProcesses ?? activeAgentProcessDiscovery.discover()
@@ -316,15 +325,11 @@ final class ProcessMonitoringCoordinator {
             isCodexAppRunning: isCodexAppRunning
         )
 
-        // Resolve jump targets via the new focused resolver.
-        // When pre-resolved targets are provided (computed off-main-actor),
-        // use them directly to avoid blocking the main thread with AppleScript calls.
-        let resolverJumpTargets = preResolvedJumpTargets
-            ?? terminalJumpTargetResolver.resolveJumpTargets(
-                for: local.sessions.filter(\.isTrackedLiveSession),
-                activeProcesses: activeProcesses
-            )
-        if !resolverJumpTargets.isEmpty {
+        // Jump targets are resolved off the main actor by the monitoring loop
+        // and handed in. Resolving them here instead would run AppleScript and
+        // terminal CLIs on the main thread; nil means "no fresh targets this
+        // pass", and the next loop iteration supplies them.
+        if let resolverJumpTargets = preResolvedJumpTargets, !resolverJumpTargets.isEmpty {
             _ = local.reconcileJumpTargets(resolverJumpTargets)
         }
 

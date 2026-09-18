@@ -349,58 +349,21 @@ struct TerminalJumpTargetResolver {
         }
 
         // Fallback to 'which'
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = ["tmux"]
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        if let _ = try? whichTask.run() {
-            whichTask.waitUntilExit()
-            if whichTask.terminationStatus == 0 {
-                let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !path.isEmpty { return path }
-            }
+        guard let path = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
+            arguments: ["tmux"]
+        ), !path.isEmpty else {
+            return nil
         }
-
-        return nil
+        return path
     }
 
     private func runTmuxCommand(tmuxPath: String, arguments: [String]) -> String? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: tmuxPath)
-        task.arguments = arguments
-
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = FileHandle.nullDevice
-
-        let completionGroup = DispatchGroup()
-        completionGroup.enter()
-        task.terminationHandler = { _ in
-            completionGroup.leave()
-        }
-
-        do {
-            try task.run()
-        } catch {
-            return nil
-        }
-
-        let waitResult = completionGroup.wait(timeout: .now() + Self.appleScriptTimeout)
-        if waitResult == .timedOut {
-            task.terminate()
-            _ = completionGroup.wait(timeout: .now() + 0.2)
-            return nil
-        }
-
-        guard task.terminationStatus == 0 else { return nil }
-
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        guard let output = String(data: data, encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-              !output.isEmpty else {
+        guard let output = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: tmuxPath),
+            arguments: arguments,
+            timeout: Self.appleScriptTimeout
+        ), !output.isEmpty else {
             return nil
         }
 
@@ -597,22 +560,13 @@ struct TerminalJumpTargetResolver {
             return found
         }
 
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = [cliName]
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        if let _ = try? whichTask.run() {
-            whichTask.waitUntilExit()
-            if whichTask.terminationStatus == 0 {
-                let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !path.isEmpty { return path }
-            }
+        guard let path = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
+            arguments: [cliName]
+        ), !path.isEmpty else {
+            return nil
         }
-
-        return nil
+        return path
     }
 
     private func fetchWeztermFamilySnapshots(cliPath: String, bundleIdentifier: String) -> [WeztermFamilySnapshot]? {
@@ -620,36 +574,13 @@ struct TerminalJumpTargetResolver {
             return []
         }
 
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: cliPath)
-        task.arguments = ["cli", "list", "--format", "json"]
-
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = FileHandle.nullDevice
-
-        let completionGroup = DispatchGroup()
-        completionGroup.enter()
-        task.terminationHandler = { _ in
-            completionGroup.leave()
-        }
-
-        do {
-            try task.run()
-        } catch {
+        guard let output = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: cliPath),
+            arguments: ["cli", "list", "--format", "json"],
+            timeout: Self.appleScriptTimeout
+        ) else {
             return nil
         }
-
-        let waitResult = completionGroup.wait(timeout: .now() + Self.appleScriptTimeout)
-        if waitResult == .timedOut {
-            task.terminate()
-            _ = completionGroup.wait(timeout: .now() + 0.2)
-            return nil
-        }
-
-        guard task.terminationStatus == 0 else { return nil }
-
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
 
         struct CLIPane: Decodable {
             let pane_id: Int
@@ -658,7 +589,7 @@ struct TerminalJumpTargetResolver {
             let tty_name: String?
         }
 
-        guard let panes = try? JSONDecoder().decode([CLIPane].self, from: data) else {
+        guard let panes = try? JSONDecoder().decode([CLIPane].self, from: Data(output.utf8)) else {
             return nil
         }
 
@@ -808,41 +739,30 @@ struct TerminalJumpTargetResolver {
     }
 
     private func runAppleScript(_ script: String) throws -> String {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
+        let result = BoundedProcess.execute(
+            executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
+            arguments: ["-e", script],
+            timeout: Self.appleScriptTimeout
+        )
 
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-        let completionGroup = DispatchGroup()
-        completionGroup.enter()
-        task.terminationHandler = { _ in
-            completionGroup.leave()
-        }
-
-        try task.run()
-        let waitResult = completionGroup.wait(timeout: .now() + Self.appleScriptTimeout)
-        if waitResult == .timedOut {
-            task.terminate()
-            _ = completionGroup.wait(timeout: .now() + 0.2)
+        if result.timedOut {
             throw NSError(domain: "TerminalJumpTargetResolver", code: 408, userInfo: [
                 NSLocalizedDescriptionKey: "AppleScript probe timed out.",
             ])
         }
 
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        guard task.terminationStatus == 0 else {
-            let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw NSError(domain: "TerminalJumpTargetResolver", code: Int(task.terminationStatus), userInfo: [
-                NSLocalizedDescriptionKey: stderr.isEmpty ? "AppleScript probe failed." : stderr,
-            ])
+        guard result.succeeded else {
+            throw NSError(
+                domain: "TerminalJumpTargetResolver",
+                code: Int(result.exitStatus ?? -1),
+                userInfo: [
+                    NSLocalizedDescriptionKey: result.standardError.isEmpty
+                        ? "AppleScript probe failed."
+                        : result.standardError,
+                ]
+            )
         }
 
-        return output
+        return result.standardOutput
     }
 }

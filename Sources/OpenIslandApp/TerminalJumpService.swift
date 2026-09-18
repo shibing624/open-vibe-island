@@ -212,6 +212,11 @@ struct TerminalJumpService {
     private static let ghosttyWindowActivationDelay = 0.04
     private static let ghosttyFocusAttempts = 3
 
+    /// Deadline for one `osascript` invocation. The window-walking scripts
+    /// finish in tens of milliseconds; anything near this bound means osascript
+    /// is blocked rather than slow, most often on the Automation consent prompt.
+    private static let appleScriptTimeout: TimeInterval = 5
+
     /// Maximum time to wait for Warp to become the system frontmost app after
     /// an activation request. macOS app activation is async at the WindowServer
     /// level. Without waiting for `frontmostApplication` to actually be Warp,
@@ -771,28 +776,12 @@ struct TerminalJumpService {
         return runTmux(socketArgs(), ["select-pane", "-t", tmuxTarget]) != nil
     }
 
-    /// Run a tmux command and return its stdout (nil on failure).
-    /// Uses the same direct-exec pattern as ActiveAgentProcessDiscovery.commandOutput.
+    /// Run a tmux command and return its stdout (nil on failure or timeout).
     private func runTmuxCommand(tmuxPath: String, socketArgs: [String], args: [String]) -> String? {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: tmuxPath)
-        process.arguments = socketArgs + args
-
-        let outPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            guard process.terminationStatus == 0 else { return nil }
-
-            return String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        } catch {
-            return nil
-        }
+        BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: tmuxPath),
+            arguments: socketArgs + args
+        )
     }
 
     private func resolveTmuxPath() -> String? {
@@ -807,18 +796,13 @@ struct TerminalJumpService {
         }
 
         // Fallback to 'which'
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = ["tmux"]
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        guard (try? whichTask.run()) != nil else { return nil }
-        whichTask.waitUntilExit()
-        guard whichTask.terminationStatus == 0 else { return nil }
-        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.isEmpty ? nil : path
+        guard let path = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
+            arguments: ["tmux"]
+        ), !path.isEmpty else {
+            return nil
+        }
+        return path
     }
 
     // MARK: - Zellij CLI-based jump
@@ -852,23 +836,20 @@ struct TerminalJumpService {
         }
 
         // Switch to the tab (1-indexed).
-        let goToTab = Process()
-        goToTab.executableURL = URL(fileURLWithPath: zellijPath)
+        var goToTabArguments: [String] = []
         if let sessionName, !sessionName.isEmpty {
-            goToTab.arguments = ["--session", sessionName, "action", "go-to-tab", "\(tabPosition + 1)"]
-        } else {
-            goToTab.arguments = ["action", "go-to-tab", "\(tabPosition + 1)"]
+            goToTabArguments += ["--session", sessionName]
         }
-        goToTab.standardOutput = FileHandle.nullDevice
-        goToTab.standardError = FileHandle.nullDevice
-        guard (try? goToTab.run()) != nil else { return false }
-        goToTab.waitUntilExit()
+        goToTabArguments += ["action", "go-to-tab", "\(tabPosition + 1)"]
 
         // The host emulator is deliberately not activated here: see the note in
         // jump(). Zellij switched its own tab, which is the part we can do
         // correctly; raising a guessed window on top of it is what moved focus
         // to the wrong terminal.
-        return goToTab.terminationStatus == 0
+        return BoundedProcess.succeeds(
+            executableURL: URL(fileURLWithPath: zellijPath),
+            arguments: goToTabArguments
+        )
     }
 
     private func resolveZellijPath() -> String? {
@@ -882,18 +863,13 @@ struct TerminalJumpService {
         }
 
         // Fallback: which.
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = ["zellij"]
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        guard (try? whichTask.run()) != nil else { return nil }
-        whichTask.waitUntilExit()
-        guard whichTask.terminationStatus == 0 else { return nil }
-        let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return path.isEmpty ? nil : path
+        guard let path = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
+            arguments: ["zellij"]
+        ), !path.isEmpty else {
+            return nil
+        }
+        return path
     }
 
     private struct ZellijPaneInfo: Decodable {
@@ -912,24 +888,17 @@ struct TerminalJumpService {
         sessionName: String?,
         paneID: Int
     ) -> Int? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: zellijPath)
         var args: [String] = []
         if let sessionName, !sessionName.isEmpty {
             args += ["--session", sessionName]
         }
         args += ["action", "list-panes", "--json", "--tab"]
-        task.arguments = args
 
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = FileHandle.nullDevice
-        guard (try? task.run()) != nil else { return nil }
-        task.waitUntilExit()
-        guard task.terminationStatus == 0 else { return nil }
-
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        guard let panes = try? JSONDecoder().decode([ZellijPaneInfo].self, from: data) else {
+        guard let output = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: zellijPath),
+            arguments: args
+        ),
+            let panes = try? JSONDecoder().decode([ZellijPaneInfo].self, from: Data(output.utf8)) else {
             return nil
         }
 
@@ -1116,22 +1085,13 @@ struct TerminalJumpService {
         }
 
         // Fallback: try PATH via /usr/bin/which.
-        let whichTask = Process()
-        whichTask.executableURL = URL(fileURLWithPath: "/usr/bin/which")
-        whichTask.arguments = [cliName]
-        let pipe = Pipe()
-        whichTask.standardOutput = pipe
-        whichTask.standardError = FileHandle.nullDevice
-        if let _ = try? whichTask.run() {
-            whichTask.waitUntilExit()
-            if whichTask.terminationStatus == 0 {
-                let path = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                if !path.isEmpty { return path }
-            }
+        guard let path = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: "/usr/bin/which"),
+            arguments: [cliName]
+        ), !path.isEmpty else {
+            return nil
         }
-
-        return nil
+        return path
     }
 
     /// Strip `file://` scheme and percent-encoding from a WezTerm/Kaku cwd URL.
@@ -1219,41 +1179,24 @@ struct TerminalJumpService {
     }
 
     private func weztermFamilyListPanes(cliPath: String) -> [WeztermFamilyPane]? {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: cliPath)
-        task.arguments = ["cli", "list", "--format", "json"]
-
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = FileHandle.nullDevice
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-        } catch {
+        // JSON for every pane of every window: the output that is most likely
+        // to exceed a pipe buffer, which is why it must not be read only after
+        // the process has exited.
+        guard let output = BoundedProcess.run(
+            executableURL: URL(fileURLWithPath: cliPath),
+            arguments: ["cli", "list", "--format", "json"]
+        ) else {
             return nil
         }
 
-        guard task.terminationStatus == 0 else { return nil }
-
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        return try? JSONDecoder().decode([WeztermFamilyPane].self, from: data)
+        return try? JSONDecoder().decode([WeztermFamilyPane].self, from: Data(output.utf8))
     }
 
     private func weztermFamilyActivatePane(cliPath: String, paneID: Int) -> Bool {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: cliPath)
-        task.arguments = ["cli", "activate-pane", "--pane-id", "\(paneID)"]
-        task.standardOutput = FileHandle.nullDevice
-        task.standardError = FileHandle.nullDevice
-
-        do {
-            try task.run()
-            task.waitUntilExit()
-            return task.terminationStatus == 0
-        } catch {
-            return false
-        }
+        BoundedProcess.succeeds(
+            executableURL: URL(fileURLWithPath: cliPath),
+            arguments: ["cli", "activate-pane", "--pane-id", "\(paneID)"]
+        )
     }
 
     private func jumpToWarpPane(_ target: JumpTarget) throws -> String {
@@ -1390,57 +1333,46 @@ struct TerminalJumpService {
     }
 
     private static func defaultOpenAction(arguments: [String]) throws {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        task.arguments = arguments
-
-        try task.run()
-        task.waitUntilExit()
-
-        guard task.terminationStatus == 0 else {
+        guard BoundedProcess.succeeds(
+            executableURL: URL(fileURLWithPath: "/usr/bin/open"),
+            arguments: arguments
+        ) else {
             throw TerminalJumpError.openFailed(arguments)
         }
     }
 
     private static func defaultAppleScriptRunner(script: String) throws -> String {
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        task.arguments = ["-e", script]
+        // Bounded: the first osascript of a session can block on the Automation
+        // (TCC) consent prompt, and the detached jump task cannot kill a child
+        // already stuck in waitUntilExit.
+        //
+        // osascript puts the useful part (which app refused, which line failed)
+        // on stderr, so report that rather than echoing the whole script back.
+        let result = BoundedProcess.execute(
+            executableURL: URL(fileURLWithPath: "/usr/bin/osascript"),
+            arguments: ["-e", script],
+            timeout: Self.appleScriptTimeout
+        )
 
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        task.standardOutput = outputPipe
-        task.standardError = errorPipe
-
-        try task.run()
-        task.waitUntilExit()
-
-        let output = String(data: outputPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-
-        guard task.terminationStatus == 0 else {
-            let stderr = String(data: errorPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
-                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            throw TerminalJumpError.appleScriptFailed(stderr.isEmpty ? script : stderr)
+        guard result.succeeded else {
+            if result.timedOut {
+                throw TerminalJumpError.appleScriptFailed(
+                    "osascript did not finish within \(Int(Self.appleScriptTimeout))s"
+                )
+            }
+            throw TerminalJumpError.appleScriptFailed(
+                result.standardError.isEmpty ? script : result.standardError
+            )
         }
 
-        return output
+        return result.standardOutput
     }
 
     private static func defaultProcessRunner(executable: String, arguments: [String]) -> Bool {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [executable] + arguments
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-
-        do {
-            try process.run()
-            process.waitUntilExit()
-            return process.terminationStatus == 0
-        } catch {
-            return false
-        }
+        BoundedProcess.succeeds(
+            executableURL: URL(fileURLWithPath: "/usr/bin/env"),
+            arguments: [executable] + arguments
+        )
     }
 
     private func escapeAppleScript(_ value: String?) -> String {

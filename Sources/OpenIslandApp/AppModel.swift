@@ -1791,7 +1791,12 @@ final class AppModel {
         }
 
         // Reconcile attachments and start monitoring (requires sessions to be loaded).
-        monitoring.reconcileSessionAttachments()
+        //
+        // No jump targets here: resolving them runs AppleScript and terminal
+        // CLIs, and this runs on the main actor during launch. The monitoring
+        // loop started below resolves them on a detached task on its first
+        // pass, so they arrive a moment later instead of freezing startup.
+        monitoring.reconcileSessionAttachments(preResolvedJumpTargets: nil)
         monitoring.startMonitoringIfNeeded()
     }
 
