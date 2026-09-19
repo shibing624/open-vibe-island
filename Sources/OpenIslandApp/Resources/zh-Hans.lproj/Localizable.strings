@@ -130,7 +130,6 @@
 "settings.sound.theme" = "事件音效主题";
 "settings.sound.theme.system" = "系统音（所有事件同一个音）";
 "settings.sound.theme.rescan" = "重新扫描音效包";
-"settings.sound.theme.installHint" = "兽人苦工主题随应用内置。可用 ./scripts/fetch-sound-packs.sh 添加更多。";
 "settings.sound.theme.preview" = "按事件试听";
 "settings.sound.theme.borrowed" = "这个包没有这一类的音，借用了包内其他音。";
 "settings.sound.theme.info" = "音效包信息";

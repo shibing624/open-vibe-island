@@ -126,7 +126,7 @@ You can also open `Package.swift` in Xcode to build and run the app target direc
 
 ### Where to Go Next
 
-- [`CLAUDE.md`](CLAUDE.md) — Architecture, conventions, branching rules, commit policy, and release workflow.
+- [`AGENTS.md`](AGENTS.md) — Architecture, conventions, project boundaries, and release workflow.
 - [`docs/architecture.md`](docs/architecture.md) — System design and engineering decisions.
 - [`docs/product.md`](docs/product.md) — Product scope and MVP boundary.
 - [`docs/hooks.md`](docs/hooks.md) — Supported hook events, payload fields, and directive protocol.

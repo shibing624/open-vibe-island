@@ -126,7 +126,7 @@ swift build -c release --product OpenIslandHooks
 
 ### 进一步了解
 
-- [`CLAUDE.md`](CLAUDE.md) — 架构、代码规范、分支规则、提交规范、发版流程。
+- [`AGENTS.md`](AGENTS.md) — 架构、代码规范、项目边界、发版流程。
 - [`docs/architecture.md`](docs/architecture.md) — 系统设计与工程决策。
 - [`docs/product.md`](docs/product.md) — 产品范围与 MVP 边界。
 - [`docs/hooks.md`](docs/hooks.md) — 支持的 Hook 事件、Payload 字段、指令协议。

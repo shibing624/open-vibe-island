@@ -2,21 +2,18 @@
 
 ## Purpose
 
-The repository harness exists to make a round of work mechanically checkable. The current baseline is intentionally small: document structure, package tests, package build, and an opt-in local app smoke path.
+The repository harness exists to make a round of work mechanically checkable. The current baseline is intentionally small: package tests, package build, and an opt-in local app smoke path.
 
 ## Commands
 
-- `scripts/harness.sh` runs the baseline checks. With no arguments it runs `docs`, `test`, and `build`.
+- `scripts/harness.sh` runs the baseline checks. With no arguments it runs `test` and `build`.
 - `scripts/harness.sh ci` is the non-GUI path used by CI.
 - `scripts/harness.sh smoke` launches the macOS app in harness mode, loads a deterministic debug scenario, captures local artifacts, and auto-exits after a short timeout.
 - `scripts/harness.sh smoke-all` runs the full debug-scenario suite and validates each artifact set.
-- `scripts/check-docs.sh` enforces the minimum doc map and required links.
 - `scripts/clean-and-run.sh` is the manual path: it cleans the user environment, rebuilds `~/Applications/Open Island Dev.app`, launches it, and then confirms the process is actually alive. It is not part of the automated harness because it mutates the local environment and leaves a GUI app running.
 
 ## Current Guarantees
 
-- Core docs remain present and indexed from [docs/index.md](./index.md).
-- Markdown files under `docs/` keep a visible top-level heading.
 - `swift test` stays green for the package targets.
 - `swift build` stays green for the package products.
 - The app can be launched locally in a deterministic harness mode without requiring live hook traffic.

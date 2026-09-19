@@ -366,7 +366,7 @@ Claude usage 设置可在 app 设置窗口启用，保持 opt-in。bridge 会把
 - 从 [docs/index.md](docs/index.md) 开始查看文档地图。
 - 阅读 [docs/quality.md](docs/quality.md) 了解质量基线和验证方式。
 - 阅读 [docs/hooks.md](docs/hooks.md) 了解所有支持的 hook 事件、payload 字段和 directive 响应格式。
-- 运行 `scripts/harness.sh` 进行自动化检查（文档验证、测试、构建）。
+- 运行 `scripts/harness.sh` 进行自动化检查（测试、构建）。
 
 ### 系统要求
 
