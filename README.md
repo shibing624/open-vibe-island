@@ -364,7 +364,7 @@ Claude usage setup is available from the app's Settings window and remains opt-i
 - Start with [docs/index.md](docs/index.md) for the current doc map.
 - Read [docs/quality.md](docs/quality.md) for the quality baseline and verification approach.
 - Read [docs/hooks.md](docs/hooks.md) for all supported hook events, payload fields, and directive response formats.
-- Run `scripts/harness.sh` for automated checks (docs validation, tests, build).
+- Run `scripts/harness.sh` for automated checks (tests, build).
 
 ### Requirements
 
